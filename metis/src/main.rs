@@ -6,13 +6,11 @@ use log::{debug, warn};
 use aya::maps::RingBuf;
 use log::info;
 use metis_common::TCPEvent;
-use std::time::Duration;
-use std::{env, mem};
+use std::env;
 use std::sync::Arc;
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
-use tokio::{signal, task};
-use tokio_util::sync::CancellationToken;
+use tokio::{signal};
 use crate::util::{ReadableTCPProbeEvent, TelegrafMetricsPusher};
 
 #[tokio::main]
