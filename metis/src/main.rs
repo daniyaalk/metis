@@ -1,14 +1,25 @@
+pub mod util;
+
 use aya::programs::TracePoint;
 #[rustfmt::skip]
 use log::{debug, warn};
+use aya::maps::RingBuf;
 use log::info;
-use tokio::signal;
-use std::env;
+use metis_common::TCPEvent;
+use std::time::Duration;
+use std::{env, mem};
+use std::sync::Arc;
+use tokio::io::Interest;
+use tokio::io::unix::AsyncFd;
+use tokio::{signal, task};
+use tokio_util::sync::CancellationToken;
+use crate::util::{ReadableTCPProbeEvent, TelegrafMetricsPusher};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
+    let metrics_pusher = Arc::new(TelegrafMetricsPusher::new("127.0.0.1:8125").await?);
 
     // Bump the memlock rlimit. This is needed for older kernels that don't use the
     // new memcg based accounting, see https://lwn.net/Articles/837122/
@@ -29,8 +40,7 @@ async fn main() -> anyhow::Result<()> {
         env!("OUT_DIR"),
         "/metis"
     )))?;
-    match aya_log::EbpfLogger::init(&mut ebpf)
-    {
+    match aya_log::EbpfLogger::init(&mut ebpf) {
         Err(e) => {
             // This can happen if you remove all log statements from your eBPF program.
             warn!("failed to initialize eBPF logger: {e}");
@@ -48,32 +58,53 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-
     // Attach all tracepoints
     let tp_names = vec![
-        "tcp_bad_csum",
         "tcp_retransmit_skb",
         "tcp_retransmit_synack",
-        "tcp_hash_md5_mismatch",
-        "tcp_hash_md5_required",
-        "tcp_hash_md5_unexpected",
         "tcp_receive_reset",
         "tcp_send_reset",
-        "tcp_sendmsg_locked",
-        "tcp_cong_state_set",
-        "tcp_rcvbuf_grow",
         "tcp_probe",
     ];
 
     for name in tp_names {
-
-        if let Some(program_optional) = ebpf.program_mut(name) {
-            let program: &mut TracePoint = program_optional.try_into()?;
-            program.load()?;
-            program.attach("tcp", name)?;
+        match ebpf.program_mut(name) {
+            Some(program_optional) => {
+                let program: &mut TracePoint = program_optional.try_into()?;
+                program.load()?;
+                program.attach("tcp", name)?;
+            }
+            None => {
+                warn!("program not found: {name}");
+            }
         }
     }
 
+    tokio::spawn(async move {
+        let ringbuf = RingBuf::try_from(ebpf.map_mut("EVENTS").unwrap()).unwrap();
+        let mut events = AsyncFd::with_interest(ringbuf, Interest::READABLE).unwrap();
+
+        loop {
+            let mut guard = events.readable_mut().await.unwrap();
+            let ring_buf = guard.get_inner_mut();
+
+            while let Some(item) = ring_buf.next() {
+
+                let raw_event: TCPEvent =
+                unsafe { std::ptr::read_unaligned(item.as_ptr() as *const TCPEvent) };
+
+                let event = ReadableTCPProbeEvent::try_from_raw_ctx(&raw_event).unwrap();
+                println!("Received: {:?}", &event);
+
+                let pusher = metrics_pusher.clone();
+                tokio::spawn(async move {
+                    pusher.push_tcp_probe(&event).await;
+                });
+            }
+
+            guard.clear_ready();
+        }
+    });
 
     let ctrl_c = signal::ctrl_c();
     info!("Waiting for Ctrl-C...");
