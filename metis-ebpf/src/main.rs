@@ -2,13 +2,11 @@
 #![no_main]
 
 mod kprobes;
+mod tracepoints;
 
-use aya_ebpf::macros::{kprobe, map};
+use aya_ebpf::macros::{kprobe, map, tracepoint};
 use aya_ebpf::maps::RingBuf;
-use aya_ebpf::{macros::tracepoint, programs::TracePointContext};
-use aya_log_ebpf::info;
-use aya_ebpf::programs::ProbeContext;
-use metis_common::TCPEvent;
+use aya_ebpf::programs::{ProbeContext, TracePointContext};
 
 enum RetransmitMode {
     SKB,
@@ -64,6 +62,14 @@ pub fn tcp_sendmsg(ctx: ProbeContext) -> u32 {
     match kprobes::tcp_sendmsg::tcp_sendmsg(ctx) {
         Ok(ret) => 0,
         Err(ret) => 0,
+    }
+}
+
+#[tracepoint]
+pub fn tcp_probe(ctx: TracePointContext) -> u32 {
+    match tracepoints::tcp_probe::tcp_probe(ctx) {
+        Ok(_) => 0,
+        Err(_) => 0,
     }
 }
 

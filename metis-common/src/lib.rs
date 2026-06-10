@@ -25,7 +25,7 @@ pub struct Event {
 
 #[repr(C)]
 #[derive(Debug)]
-pub struct TCPEvent {
+pub struct TCPProbeEvent {
     pub pid: u32,
     pub tgid: u32,
     pub ctx_buf: [u8; 150],

@@ -8,16 +8,18 @@ use aya::programs::{KProbe, TracePoint};
 use log::{debug, warn};
 use aya::maps::RingBuf;
 use log::info;
-use metis_common::TCPEvent;
 use std::env;
 use std::sync::Arc;
 use tokio::io::unix::AsyncFd;
 use tokio::signal;
+use metis_common::TCPProbeEvent;
 use crate::modules::http::HttpModule;
 use crate::modules::Module;
+use crate::modules::tcp::tcp::TcpModule;
 use crate::probes::kprobes::tcp_sendmsg::TCPSendMsgProbe;
-use crate::probes::{Probe, ProbeRequirement};
-use crate::util::{ReadableTCPProbeEvent, TelegrafMetricsPusher};
+use crate::probes::{Probe, ProbeEvent, ProbeRequirement};
+use crate::probes::tracepoints::tcp_probe::TcpProbe;
+use crate::util::TelegrafMetricsPusher;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -66,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
 
 
     let enabled_modules: Vec<Box<dyn Module>> = vec![
-        Box::new(MysqlModule), Box::new(HttpModule)
+        Box::new(MysqlModule), Box::new(HttpModule), Box::new(TcpModule)
     ];
 
 
@@ -82,6 +84,21 @@ async fn main() -> anyhow::Result<()> {
             ProbeRequirement::TcpSendMsg {dest_ports} => {
                 tcp_sendmsg_ports.extend(dest_ports);
             },
+            ProbeRequirement::TcpProbe => {
+
+                let p =  TcpProbe {};
+                p.load(&mut ebpf).expect("Unable to load tcp probe");
+
+                let pusher = metrics_pusher.clone();
+                p.get_event_stream(&mut ebpf,   move |event| {
+
+                    if let ProbeEvent::TcpProbe(event) = event {
+                            pusher.push_tcp_probe(event);
+                    }
+
+                })
+
+            }
             _ => {}
 
         }
@@ -92,6 +109,9 @@ async fn main() -> anyhow::Result<()> {
     let final_tcp_sendmsg_probe = TCPSendMsgProbe::new(tcp_sendmsg_ports);
 
     final_tcp_sendmsg_probe.load(&mut ebpf);
+
+
+
 
 
     // match ebpf.program_mut("tcp_sendmsg") {
