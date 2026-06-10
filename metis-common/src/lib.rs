@@ -8,6 +8,21 @@
 //     SendReset(),
 // }
 
+
+#[repr(C)]
+pub enum EventType {
+    TcpProbe(Event),
+    MysqlProbe(Event),
+
+}
+
+
+#[repr(C)]
+pub struct Event {
+    pub complete: bool,
+    pub data: [u8; 100],
+}
+
 #[repr(C)]
 #[derive(Debug)]
 pub struct TCPEvent {

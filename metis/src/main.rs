@@ -1,6 +1,9 @@
 pub mod util;
+pub mod modules;
+pub mod probes;
 
-use aya::programs::TracePoint;
+use crate::modules::mysql::dependencies::MysqlModule;
+use aya::programs::{KProbe, TracePoint};
 #[rustfmt::skip]
 use log::{debug, warn};
 use aya::maps::RingBuf;
@@ -8,9 +11,12 @@ use log::info;
 use metis_common::TCPEvent;
 use std::env;
 use std::sync::Arc;
-use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
-use tokio::{signal};
+use tokio::signal;
+use crate::modules::http::HttpModule;
+use crate::modules::Module;
+use crate::probes::kprobes::tcp_sendmsg::TCPSendMsgProbe;
+use crate::probes::{Probe, ProbeRequirement};
 use crate::util::{ReadableTCPProbeEvent, TelegrafMetricsPusher};
 
 #[tokio::main]
@@ -56,53 +62,94 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Attach all tracepoints
-    let tp_names = vec![
-        "tcp_retransmit_skb",
-        "tcp_retransmit_synack",
-        "tcp_receive_reset",
-        "tcp_send_reset",
-        "tcp_probe",
+
+
+
+    let enabled_modules: Vec<Box<dyn Module>> = vec![
+        Box::new(MysqlModule), Box::new(HttpModule)
     ];
 
-    for name in tp_names {
-        match ebpf.program_mut(name) {
-            Some(program_optional) => {
-                let program: &mut TracePoint = program_optional.try_into()?;
-                program.load()?;
-                program.attach("tcp", name)?;
-            }
-            None => {
-                warn!("program not found: {name}");
-            }
+
+    let mut required_probes: Vec<ProbeRequirement> = vec![];
+    let mut tcp_sendmsg_ports: Vec<u16> = Vec::new();
+
+    for module in &enabled_modules {
+        required_probes.extend(module.required_probes())
+    }
+
+    for probe in required_probes {
+        match probe {
+            ProbeRequirement::TcpSendMsg {dest_ports} => {
+                tcp_sendmsg_ports.extend(dest_ports);
+            },
+            _ => {}
+
         }
     }
 
-    tokio::spawn(async move {
-        let ringbuf = RingBuf::try_from(ebpf.map_mut("EVENTS").unwrap()).unwrap();
-        let mut events = AsyncFd::with_interest(ringbuf, Interest::READABLE).unwrap();
 
-        loop {
-            let mut guard = events.readable_mut().await.unwrap();
-            let ring_buf = guard.get_inner_mut();
 
-            while let Some(item) = ring_buf.next() {
+    let final_tcp_sendmsg_probe = TCPSendMsgProbe::new(tcp_sendmsg_ports);
 
-                let raw_event: TCPEvent =
-                unsafe { std::ptr::read_unaligned(item.as_ptr() as *const TCPEvent) };
+    final_tcp_sendmsg_probe.load(&mut ebpf);
 
-                let event = ReadableTCPProbeEvent::try_from_raw_ctx(&raw_event).unwrap();
-                println!("Received: {:?}", &event);
 
-                let pusher = metrics_pusher.clone();
-                tokio::spawn(async move {
-                    pusher.push_tcp_probe(&event).await;
-                });
-            }
-
-            guard.clear_ready();
-        }
-    });
+    // match ebpf.program_mut("tcp_sendmsg") {
+    //     Some(program) => {
+    //         let program: & mut KProbe = program.try_into()?;
+    //         program.load()?;
+    //         program.attach("tcp_sendmsg", 0)?;
+    //     }
+    //     _ => {}
+    // }
+    //
+    // // Attach all tracepoints
+    // let tp_names = vec![
+    //     "tcp_retransmit_skb",
+    //     "tcp_retransmit_synack",
+    //     "tcp_receive_reset",
+    //     "tcp_send_reset",
+    //     "tcp_probe",
+    // ];
+    //
+    // for name in tp_names {
+    //     match ebpf.program_mut(name) {
+    //         Some(program_optional) => {
+    //             let program: &mut TracePoint = program_optional.try_into()?;
+    //             program.load()?;
+    //             program.attach("tcp", name)?;
+    //         }
+    //         None => {
+    //             warn!("program not found: {name}");
+    //         }
+    //     }
+    // }
+    //
+    // tokio::spawn(async move {
+    //     let ringbuf = RingBuf::try_from(ebpf.map_mut("EVENTS").unwrap()).unwrap();
+    //     let mut events = AsyncFd::with_interest(ringbuf, Interest::READABLE).unwrap();
+    //
+    //     loop {
+    //         let mut guard = events.readable_mut().await.unwrap();
+    //         let ring_buf = guard.get_inner_mut();
+    //
+    //         while let Some(item) = ring_buf.next() {
+    //
+    //             let raw_event: TCPEvent =
+    //             unsafe { std::ptr::read_unaligned(item.as_ptr() as *const TCPEvent) };
+    //
+    //             let event = ReadableTCPProbeEvent::try_from_raw_ctx(&raw_event).unwrap();
+    //             println!("Received: {:?}", &event);
+    //
+    //             let pusher = metrics_pusher.clone();
+    //             tokio::spawn(async move {
+    //                 pusher.push_tcp_probe(&event).await;
+    //             });
+    //         }
+    //
+    //         guard.clear_ready();
+    //     }
+    // });
 
     let ctrl_c = signal::ctrl_c();
     info!("Waiting for Ctrl-C...");
