@@ -1,7 +1,7 @@
 use crate::probes::ProbeRequirement;
 
-pub mod mysql;
 pub mod http;
+pub mod mysql;
 pub mod tcp;
 
 pub trait Module {

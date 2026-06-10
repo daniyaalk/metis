@@ -1,8 +1,9 @@
+use crate::probes::tracepoints::tcp_probe::ReadableTCPProbeEvent;
+use crate::probes::tracepoints::tcp_retransmit_skb::ReadableTCPRetransmitSkbEvent;
+use log::{debug, error};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use log::{debug, error};
 use tokio::net::UdpSocket;
-use crate::probes::tracepoints::tcp_probe::ReadableTCPProbeEvent;
 
 pub struct TelegrafMetricsPusher {
     socket: Arc<UdpSocket>,
@@ -33,11 +34,21 @@ impl TelegrafMetricsPusher {
 
         let line_protocol = format!(
             "bpf_tcp_probe,src_ip={},dest_ip={},family={} \
-            pid={}u,tgid={}u,src_port={}u,dest_port={}u,data_len={}u,\
-            snd_cwnd={}u,ssthresh={}u,snd_wnd={}u,srtt_us={}u,rcv_wnd={}u",
-            event.src_addr, event.dest_addr, event.family,
-            event.pid, event.tgid, event.src_port, event.dest_port, event.data_len,
-            event.snd_cwnd, event.ssthresh, event.snd_wnd, event.srtt_us, event.rcv_wnd
+            pid={},tgid={},src_port={},dest_port={},data_len={}u,\
+            snd_cwnd={}u,ssthresh={}u,snd_wnd={}u,srtt_us={}u,rcv_wnd={}u,value=1u",
+            event.src_addr,
+            event.dest_addr,
+            event.family,
+            event.pid,
+            event.tgid,
+            event.src_port,
+            event.dest_port,
+            event.data_len,
+            event.snd_cwnd,
+            event.ssthresh,
+            event.snd_wnd,
+            event.srtt_us,
+            event.rcv_wnd
         );
 
         // Send non-blocking over UDP. If Telegraf is down or dropping packets,
@@ -50,6 +61,35 @@ impl TelegrafMetricsPusher {
                 debug!("Telemetry metrics pushed successfully.");
             }
         });
+    }
 
+    pub fn push_tcp_retransmit_skb(&self, event: &ReadableTCPRetransmitSkbEvent) {
+        let socket = self.socket.clone();
+        let addr = self.telegraf_addr;
+
+        let line_protocol = format!(
+            "bpf_tcp_retransmit_skb,\
+            src_ip={},dest_ip={},family={},state={} \
+            pid={},src_port={},dest_port={},\
+            err={},skbaddr={},skaddr={},value=1u",
+            event.source_ip,
+            event.destination_ip,
+            event.family,
+            event.state,
+            event.pid,
+            event.source_port,
+            event.destination_port,
+            event.err,
+            event.skbaddr,
+            event.skaddr,
+        );
+
+        tokio::spawn(async move {
+            if let Err(e) = socket.send_to(line_protocol.as_bytes(), addr).await {
+                error!("Failed to ship TCP retransmit telemetry packet: {}", e);
+            } else {
+                debug!("TCP retransmit telemetry pushed successfully.");
+            }
+        });
     }
 }

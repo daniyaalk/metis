@@ -8,14 +8,11 @@
 //     SendReset(),
 // }
 
-
 #[repr(C)]
 pub enum EventType {
     TcpProbe(Event),
     MysqlProbe(Event),
-
 }
-
 
 #[repr(C)]
 pub struct Event {

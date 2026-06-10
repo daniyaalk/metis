@@ -9,6 +9,8 @@ impl Module for HttpModule {
     }
 
     fn required_probes(&self) -> Vec<ProbeRequirement> {
-        vec![ProbeRequirement::TcpSendMsg{dest_ports: vec![80]}]
+        vec![ProbeRequirement::TcpRetransmitSkb {
+            dest_ports: vec![80, 443],
+        }]
     }
 }

@@ -56,7 +56,6 @@ pub static mut EVENTS: RingBuf = RingBuf::with_byte_size(1024 * 256, 0);
 //     0
 // }
 
-
 #[kprobe]
 pub fn tcp_sendmsg(ctx: ProbeContext) -> u32 {
     match kprobes::tcp_sendmsg::tcp_sendmsg(ctx) {
@@ -68,6 +67,14 @@ pub fn tcp_sendmsg(ctx: ProbeContext) -> u32 {
 #[tracepoint]
 pub fn tcp_probe(ctx: TracePointContext) -> u32 {
     match tracepoints::tcp_probe::tcp_probe(ctx) {
+        Ok(_) => 0,
+        Err(_) => 0,
+    }
+}
+
+#[tracepoint]
+pub fn tcp_retransmit_skb(ctx: TracePointContext) -> u32 {
+    match tracepoints::tcp_retransmit_skb::tcp_retransmit_skb(ctx) {
         Ok(_) => 0,
         Err(_) => 0,
     }

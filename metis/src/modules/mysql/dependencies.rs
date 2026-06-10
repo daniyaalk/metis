@@ -1,7 +1,5 @@
 use crate::modules::Module;
-use crate::probes::{ProbeRequirement};
-
-
+use crate::probes::ProbeRequirement;
 
 pub struct MysqlModule;
 
@@ -11,6 +9,8 @@ impl Module for MysqlModule {
     }
 
     fn required_probes(&self) -> Vec<ProbeRequirement> {
-        vec![ProbeRequirement::TcpSendMsg{dest_ports: vec![3306, 6033]}]
+        vec![ProbeRequirement::TcpSendMsg {
+            dest_ports: vec![3306, 6033],
+        }]
     }
 }

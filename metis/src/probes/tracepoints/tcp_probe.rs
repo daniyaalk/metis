@@ -1,59 +1,51 @@
+use crate::probes::{Probe, ProbeEvent};
 use aya::Ebpf;
 use aya::maps::RingBuf;
 use aya::programs::TracePoint;
+use log::{debug, error};
+use metis_common::TCPProbeEvent;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
-use metis_common::TCPProbeEvent;
-use crate::probes::{Probe, ProbeEvent};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use log::{debug, error};
 use tokio::net::UdpSocket;
 
 pub struct TcpProbe {}
 
 impl Probe for TcpProbe {
     fn load(&self, ebpf: &mut Ebpf) -> Result<(), ()> {
-
         let program = ebpf.program_mut("tcp_probe").unwrap();
-        let program : &mut TracePoint = program.try_into().unwrap();
+        let program: &mut TracePoint = program.try_into().unwrap();
         program.load();
-        program.attach("tcp","tcp_probe");
+        program.attach("tcp", "tcp_probe");
 
         Ok(())
     }
 
     fn get_event_stream<F>(&self, ebpf: &mut Ebpf, callback: F)
-    where F : Fn(&ProbeEvent) + Send + Sync + 'static,
+    where
+        F: Fn(&ProbeEvent) + Send + Sync + 'static,
     {
-
         let ringbuf = RingBuf::try_from(ebpf.take_map("TCP_PROBE_RINGBUF").unwrap()).unwrap();
-        tokio::spawn(
-            async move {
-                let mut events = AsyncFd::with_interest(ringbuf, Interest::READABLE).unwrap();
+        tokio::spawn(async move {
+            let mut events = AsyncFd::with_interest(ringbuf, Interest::READABLE).unwrap();
 
+            loop {
+                let mut guard = events.readable_mut().await.unwrap();
+                let ring_buf = guard.get_inner_mut();
 
-                loop {
-                    let mut guard = events.readable_mut().await.unwrap();
-                    let ring_buf = guard.get_inner_mut();
-
-                    while let Some(item) = ring_buf.next() {
-
-                        let raw_event: TCPProbeEvent =
+                while let Some(item) = ring_buf.next() {
+                    let raw_event: TCPProbeEvent =
                         unsafe { std::ptr::read_unaligned(item.as_ptr() as *const TCPProbeEvent) };
 
-                        let event = ReadableTCPProbeEvent::try_from_raw_ctx(&raw_event).unwrap();
-                        callback(&ProbeEvent::TcpProbe(event));
-
-                    }
-
-                    guard.clear_ready();
+                    let event = ReadableTCPProbeEvent::try_from_raw_ctx(&raw_event).unwrap();
+                    callback(&ProbeEvent::TcpProbe(event));
                 }
-            }
-        );
 
+                guard.clear_ready();
+            }
+        });
     }
 }
-
 
 // Clean, application-facing readable format
 #[derive(Debug, Clone)]
@@ -119,9 +111,8 @@ impl ReadableTCPProbeEvent {
         }
 
         // Safely extract the raw trace structure using unaligned parsing rules
-        let raw: RawTcpProbe = unsafe {
-            std::ptr::read_unaligned(event.ctx_buf.as_ptr() as *const RawTcpProbe)
-        };
+        let raw: RawTcpProbe =
+            unsafe { std::ptr::read_unaligned(event.ctx_buf.as_ptr() as *const RawTcpProbe) };
 
         const AF_INET: u16 = 2;
         const AF_INET6: u16 = 10;
@@ -143,12 +134,10 @@ impl ReadableTCPProbeEvent {
                     IpAddr::V6(Ipv6Addr::from(dest_bytes)),
                 )
             }
-            _ => {
-                (
-                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                )
-            }
+            _ => (
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            ),
         };
 
         Some(Self {
@@ -176,4 +165,3 @@ impl ReadableTCPProbeEvent {
         })
     }
 }
-

@@ -5,17 +5,15 @@ use aya_log_ebpf::error;
 use metis_common::TCPProbeEvent;
 
 static MAP_FLAG: u32 = aya_ebpf::bindings::BPF_F_WRONLY_PROG;
-#[map(name="TCP_PROBE_RINGBUF")]
+#[map(name = "TCP_PROBE_RINGBUF")]
 pub static mut TCP_PROBE_RINGBUF: RingBuf = RingBuf::with_byte_size(1024 * 64, 0);
 
-
-struct TcpProbe{}
+struct TcpProbe {}
 
 pub fn tcp_probe(ctx: TracePointContext) -> Result<u32, u32> {
-
     let pid_tgid = aya_ebpf::helpers::bpf_get_current_pid_tgid();
 
-    if let Ok(buf ) = unsafe { ctx.read_at(0) } {
+    if let Ok(buf) = unsafe { ctx.read_at(0) } {
         unsafe {
             #[allow(static_mut_refs)]
             if let Err(e) = TCP_PROBE_RINGBUF.output::<TCPProbeEvent>(
@@ -23,7 +21,8 @@ pub fn tcp_probe(ctx: TracePointContext) -> Result<u32, u32> {
                     pid: (pid_tgid >> 32) as u32,
                     tgid: pid_tgid as u32,
                     ctx_buf: buf,
-                }, 0
+                },
+                0,
             ) {
                 error!(ctx, "TCP Probe error: {}", e);
             }
