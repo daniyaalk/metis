@@ -1,5 +1,7 @@
 use crate::probes::tracepoints::tcp_probe::ReadableTCPProbeEvent;
+use crate::probes::tracepoints::tcp_receive_reset::ReadableTcpReceiveResetEvent;
 use crate::probes::tracepoints::tcp_retransmit_skb::ReadableTCPRetransmitSkbEvent;
+use crate::probes::tracepoints::tcp_send_reset::ReadableTcpSendResetEvent;
 use log::{debug, error};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -33,8 +35,8 @@ impl TelegrafMetricsPusher {
         let addr = self.telegraf_addr;
 
         let line_protocol = format!(
-            "bpf_tcp_probe,src_ip={},dest_ip={},family={} \
-            pid={},tgid={},src_port={},dest_port={},data_len={}u,\
+            "bpf_tcp_probe,src_ip={},dest_ip={},family={},\
+            pid={},tgid={},src_port={},dest_port={} data_len={}u,\
             snd_cwnd={}u,ssthresh={}u,snd_wnd={}u,srtt_us={}u,rcv_wnd={}u,value=1u",
             event.src_addr,
             event.dest_addr,
@@ -69,9 +71,9 @@ impl TelegrafMetricsPusher {
 
         let line_protocol = format!(
             "bpf_tcp_retransmit_skb,\
-            src_ip={},dest_ip={},family={},state={} \
+            src_ip={},dest_ip={},family={},state={},\
             pid={},src_port={},dest_port={},\
-            err={},skbaddr={},skaddr={},value=1u",
+            err={} value=1u",
             event.source_ip,
             event.destination_ip,
             event.family,
@@ -80,8 +82,6 @@ impl TelegrafMetricsPusher {
             event.source_port,
             event.destination_port,
             event.err,
-            event.skbaddr,
-            event.skaddr,
         );
 
         tokio::spawn(async move {
@@ -89,6 +89,56 @@ impl TelegrafMetricsPusher {
                 error!("Failed to ship TCP retransmit telemetry packet: {}", e);
             } else {
                 debug!("TCP retransmit telemetry pushed successfully.");
+            }
+        });
+    }
+
+    pub fn push_tcp_send_reset(&self, event: &ReadableTcpSendResetEvent) {
+        let socket = self.socket.clone();
+        let addr = self.telegraf_addr;
+
+        let line_protocol = format!(
+            "bpf_tcp_send_reset,\
+            src_ip={},dest_ip={},state={},reason={},\
+            pid={},src_port={},dst_port={} value=1u",
+            event.src_ip,
+            event.dst_ip,
+            event.state,
+            event.reason,
+            event.pid,
+            event.src_port,
+            event.dst_port,
+        );
+
+        tokio::spawn(async move {
+            if let Err(e) = socket.send_to(line_protocol.as_bytes(), addr).await {
+                error!("Failed to ship TCP send reset telemetry packet: {}", e);
+            }
+        });
+    }
+
+    pub fn push_tcp_receive_reset(&self, event: &ReadableTcpReceiveResetEvent) {
+        let socket = self.socket.clone();
+        let addr = self.telegraf_addr;
+
+        let line_protocol = format!(
+            "bpf_tcp_receive_reset,\
+            src_ip={},dest_ip={},family={},\
+            pid={},src_port={},dest_port={},\
+            skaddr={},sock_cookie={} value=1u",
+            event.src_ip,
+            event.dst_ip,
+            event.family,
+            event.pid,
+            event.sport,
+            event.dport,
+            event.skaddr,
+            event.sock_cookie,
+        );
+
+        tokio::spawn(async move {
+            if let Err(e) = socket.send_to(line_protocol.as_bytes(), addr).await {
+                error!("Failed to ship TCP receive reset telemetry packet: {}", e);
             }
         });
     }

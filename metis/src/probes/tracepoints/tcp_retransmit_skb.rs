@@ -2,7 +2,7 @@ use crate::probes::{Probe, ProbeEvent};
 use aya::Ebpf;
 use aya::maps::RingBuf;
 use aya::programs::TracePoint;
-use log::{debug};
+use log::debug;
 use metis_common::TCPProbeEvent;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::{mem, ptr};

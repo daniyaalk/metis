@@ -80,6 +80,22 @@ pub fn tcp_retransmit_skb(ctx: TracePointContext) -> u32 {
     }
 }
 
+#[tracepoint]
+pub fn tcp_send_reset(ctx: TracePointContext) -> u32 {
+    match tracepoints::tcp_send_reset::tcp_send_reset(ctx) {
+        Ok(_) => 0,
+        Err(_) => 0,
+    }
+}
+
+#[tracepoint]
+pub fn tcp_receive_reset(ctx: TracePointContext) -> u32 {
+    match tracepoints::tcp_receive_reset::tcp_receive_reset(ctx) {
+        Ok(_) => 0,
+        Err(_) => 0,
+    }
+}
+
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {

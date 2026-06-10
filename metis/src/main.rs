@@ -12,6 +12,7 @@ use crate::modules::tcp::tcp::TcpModule;
 use crate::probes::kprobes::tcp_sendmsg::TCPSendMsgProbe;
 use crate::probes::tracepoints::tcp_probe::TcpProbe;
 use crate::probes::tracepoints::tcp_retransmit_skb::TcpRetransmitSkb;
+use crate::probes::tracepoints::tcp_send_reset::TcpSendReset;
 use crate::probes::{Probe, ProbeEvent, ProbeRequirement};
 use crate::util::TelegrafMetricsPusher;
 use aya::maps::RingBuf;
@@ -21,6 +22,7 @@ use std::env;
 use std::sync::Arc;
 use tokio::io::unix::AsyncFd;
 use tokio::signal;
+use crate::probes::tracepoints::tcp_receive_reset::TcpReceiveReset;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -74,6 +76,7 @@ async fn main() -> anyhow::Result<()> {
     let mut required_probes: Vec<ProbeRequirement> = vec![];
     let mut tcp_sendmsg_ports: Vec<u16> = Vec::new();
     let mut tcp_retransmit_skb_ports: Vec<u16> = Vec::new();
+    let mut tcp_receive_reset_ports: Vec<u16> = Vec::new();
 
     for module in &enabled_modules {
         required_probes.extend(module.required_probes())
@@ -98,21 +101,41 @@ async fn main() -> anyhow::Result<()> {
             ProbeRequirement::TcpRetransmitSkb { dest_ports } => {
                 tcp_retransmit_skb_ports.extend(dest_ports);
             }
+            ProbeRequirement::TcpSendReset => {
+                let p = TcpSendReset {};
+                p.load(&mut ebpf);
+                let pusher = metrics_pusher.clone();
+                p.get_event_stream(&mut ebpf, move |event| {
+                    if let ProbeEvent::TcpSendReset(event) = event {
+                        pusher.push_tcp_send_reset(event);
+                    }
+                });
+            }
+            ProbeRequirement::TcpReceiveReset { dest_ports } => {
+                tcp_receive_reset_ports.extend(dest_ports);
+            }
             _ => {}
         }
     }
 
     let final_tcp_sendmsg_probe = TCPSendMsgProbe::new(tcp_sendmsg_ports);
-
     final_tcp_sendmsg_probe.load(&mut ebpf);
 
     let final_tcp_retransmit_skb_probe = TcpRetransmitSkb::new(tcp_retransmit_skb_ports);
     final_tcp_retransmit_skb_probe.load(&mut ebpf);
-
     let pusher = metrics_pusher.clone();
     final_tcp_retransmit_skb_probe.get_event_stream(&mut ebpf, move |event| {
         if let ProbeEvent::TcpRetransmitSkb(event) = event {
             pusher.push_tcp_retransmit_skb(event);
+        }
+    });
+
+    let final_tcp_receive_reset_probe = TcpReceiveReset::new(tcp_receive_reset_ports);
+    final_tcp_receive_reset_probe.load(&mut ebpf);
+    let pusher = metrics_pusher.clone();
+    final_tcp_receive_reset_probe.get_event_stream(&mut ebpf, move |event| {
+        if let ProbeEvent::TcpReceiveReset(event) = event {
+            pusher.push_tcp_receive_reset(event);
         }
     });
 

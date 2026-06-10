@@ -1,0 +1,32 @@
+use aya_ebpf::macros::map;
+use aya_ebpf::maps::{HashMap, RingBuf};
+use aya_ebpf::programs::TracePointContext;
+use aya_log_ebpf::{error, trace};
+use metis_common::TCPProbeEvent;
+
+#[map(name = "TCP_SEND_RESET_RINGBUF")]
+pub static mut TCP_SEND_RESET_RINGBUF: RingBuf = RingBuf::with_byte_size(1024 * 64, 0);
+
+pub fn tcp_send_reset(ctx: TracePointContext) -> Result<u32, u32> {
+    if let Ok(buf) = unsafe { ctx.read_at::<[u8; 150]>(0) } {
+        let pid_tgid = aya_ebpf::helpers::bpf_get_current_pid_tgid();
+
+        unsafe {
+            #[allow(static_mut_refs)]
+            if let Err(e) = TCP_SEND_RESET_RINGBUF.output::<TCPProbeEvent>(
+                &TCPProbeEvent {
+                    pid: (pid_tgid >> 32) as u32,
+                    tgid: pid_tgid as u32,
+                    ctx_buf: buf,
+                },
+                0,
+            ) {
+                error!(ctx, "TCP Probe error: {}", e);
+            }
+        }
+    } else {
+        error!(ctx, "Unable to read ctx buffer in tcp_probe.rs!")
+    }
+
+    Ok(0)
+}

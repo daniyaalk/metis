@@ -14,12 +14,10 @@ impl Module for TcpModule {
             ProbeRequirement::TcpRetransmitSkb {
                 dest_ports: vec![0], // Port 0 is a sentinel key to disable port filtering.
             },
-            ProbeRequirement::TcpSendReset {
-                dest_ports: vec![0],
-            },
+            ProbeRequirement::TcpSendReset,
             ProbeRequirement::TcpReceiveReset {
                 dest_ports: vec![0],
-            }
+            },
         ]
     }
 }

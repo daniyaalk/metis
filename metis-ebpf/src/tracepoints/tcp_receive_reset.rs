@@ -4,16 +4,16 @@ use aya_ebpf::programs::TracePointContext;
 use aya_log_ebpf::{error, trace};
 use metis_common::TCPProbeEvent;
 
-#[map(name = "TCP_RETRANSMIT_SKB_PORTS")]
+#[map(name = "TCP_RECEIVE_RESET_PORTS")]
 static mut PORTS: HashMap<u16, u8> =
     HashMap::with_max_entries(100, aya_ebpf::bindings::BPF_F_RDONLY_PROG);
 
-#[map(name = "TCP_RETRANSMIT_SKB_RINGBUF")]
-pub static mut TCP_RETRANSMIT_SKB_RINGBUF: RingBuf = RingBuf::with_byte_size(1024 * 64, 0);
+#[map(name = "TCP_RECEIVE_RESET_RINGBUF")]
+pub static mut TCP_RECEIVE_RESET_RINGBUF: RingBuf = RingBuf::with_byte_size(1024 * 64, 0);
 
-pub fn tcp_retransmit_skb(ctx: TracePointContext) -> Result<u32, u32> {
+pub fn tcp_receive_reset(ctx: TracePointContext) -> Result<u32, u32> {
     if let Ok(buf) = unsafe { ctx.read_at::<[u8; 150]>(0) } {
-        let port: u16 = u16::from_ne_bytes(buf[30..32].try_into().unwrap());
+        let port: u16 = u16::from_ne_bytes(buf[18..20].try_into().unwrap());
 
         #[allow(static_mut_refs)]
         if unsafe { PORTS.get(0).is_none() && PORTS.get(&port).is_none() } {
@@ -27,7 +27,7 @@ pub fn tcp_retransmit_skb(ctx: TracePointContext) -> Result<u32, u32> {
 
         unsafe {
             #[allow(static_mut_refs)]
-            if let Err(e) = TCP_RETRANSMIT_SKB_RINGBUF.output::<TCPProbeEvent>(
+            if let Err(e) = TCP_RECEIVE_RESET_RINGBUF.output::<TCPProbeEvent>(
                 &TCPProbeEvent {
                     pid: (pid_tgid >> 32) as u32,
                     tgid: pid_tgid as u32,
