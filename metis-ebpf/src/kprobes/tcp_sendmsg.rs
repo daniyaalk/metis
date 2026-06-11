@@ -1,6 +1,6 @@
-use aya_ebpf::helpers::{bpf_ktime_get_ns, bpf_probe_read_kernel, bpf_probe_read_user_buf};
+use aya_ebpf::helpers::{bpf_get_prandom_u32, bpf_ktime_get_ns, bpf_probe_read_kernel, bpf_probe_read_user_buf};
 use aya_ebpf::macros::map;
-use aya_ebpf::maps::{HashMap, PerCpuArray, RingBuf};
+use aya_ebpf::maps::{Array, HashMap, PerCpuArray, RingBuf};
 use aya_ebpf::programs::ProbeContext;
 use metis_common::KProbeChunk;
 
@@ -34,6 +34,13 @@ static mut SCRATCH: PerCpuArray<KProbeChunk> = PerCpuArray::with_max_entries(1, 
 #[map(name = "TCP_SENDMSG_RINGBUF")]
 pub static mut TCP_SENDMSG_RINGBUF: RingBuf = RingBuf::with_byte_size(512 * 1024, 0);
 
+/// Sampling threshold scaled to [0, u32::MAX].
+/// u32::MAX means "capture everything" (default when unset).
+/// Userspace converts a percentage to: `(rate / 100.0 * u32::MAX as f64) as u32`.
+/// BPF passes the event when `bpf_get_prandom_u32() <= threshold`.
+#[map(name = "TCP_SENDMSG_SAMPLE_RATE")]
+static mut SAMPLE_RATE: Array<u32> = Array::with_max_entries(1, 0);
+
 pub fn tcp_sendmsg(ctx: ProbeContext) -> Result<u32, u32> {
     let sock: *const u16 = ctx.arg(0).ok_or(1u32)?;
     let msg: *const u8 = ctx.arg(1).ok_or(1u32)?;
@@ -45,6 +52,13 @@ pub fn tcp_sendmsg(ctx: ProbeContext) -> Result<u32, u32> {
 
     #[allow(static_mut_refs)]
     if unsafe { PORTS.get(0).is_none() && PORTS.get(&port).is_none() } {
+        return Ok(0);
+    }
+
+    // ── Sampling ──────────────────────────────────────────────────────────────
+    #[allow(static_mut_refs)]
+    let threshold = unsafe { SAMPLE_RATE.get(0).copied().unwrap_or(u32::MAX) };
+    if threshold < u32::MAX && unsafe { bpf_get_prandom_u32() } > threshold {
         return Ok(0);
     }
 

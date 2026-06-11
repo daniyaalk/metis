@@ -10,15 +10,17 @@ use tokio::io::Interest;
 
 pub struct TcpSendMsgProbe {
     ports: Vec<u16>,
+    /// Sampling rate as a percentage (0.0–100.0). Supports fractional values like 0.01.
+    sample_rate: f32,
 }
 
 impl TcpSendMsgProbe {
-    pub fn new(ports: Vec<u16>) -> Self {
-        Self { ports }
+    pub fn new(ports: Vec<u16>, sample_rate: f32) -> Self {
+        Self { ports, sample_rate }
     }
 
-    /// Inserts port filters, attaches the `tcp_sendmsg` kprobe, and spawns
-    /// a task that reassembles chunked payloads before calling `on_event`.
+    /// Inserts port filters and sample rate, attaches the `tcp_sendmsg` kprobe,
+    /// and spawns a task that reassembles chunked payloads before calling `on_event`.
     pub fn attach<F>(self, ebpf: &mut Ebpf, on_event: F) -> anyhow::Result<()>
     where
         F: Fn(ProbeEvent) + Send + 'static,
@@ -30,6 +32,19 @@ impl TcpSendMsgProbe {
         for port in &self.ports {
             map.insert(*port, 1, 0)?;
         }
+
+        // Scale percentage to [0, u32::MAX] threshold. BPF passes when random <= threshold.
+        let rate_fraction = (self.sample_rate as f64 / 100.0).clamp(0.0, 1.0);
+        let threshold = if rate_fraction >= 1.0 {
+            u32::MAX
+        } else {
+            (rate_fraction * u32::MAX as f64) as u32
+        };
+        let mut rate_map = aya::maps::Array::<_, u32>::try_from(
+            ebpf.map_mut("TCP_SENDMSG_SAMPLE_RATE")
+                .context("TCP_SENDMSG_SAMPLE_RATE map not found")?,
+        )?;
+        rate_map.set(0, threshold, 0)?;
 
         let program: &mut KProbe = ebpf
             .program_mut("tcp_sendmsg")

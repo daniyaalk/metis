@@ -12,11 +12,13 @@ use std::sync::{Arc, Mutex};
 
 pub struct Orchestrator {
     modules: Vec<Arc<Mutex<dyn Module>>>,
+    /// Percentage of tcp_sendmsg events to capture (0.0–100.0). Shared by all modules.
+    tcp_sendmsg_sample_rate: f32,
 }
 
 impl Orchestrator {
-    pub fn new(modules: Vec<Arc<Mutex<dyn Module>>>) -> Self {
-        Self { modules }
+    pub fn new(modules: Vec<Arc<Mutex<dyn Module>>>, tcp_sendmsg_sample_rate: f32) -> Self {
+        Self { modules, tcp_sendmsg_sample_rate }
     }
 
     /// Builds the routing table, merges port configs, loads every required
@@ -47,7 +49,8 @@ impl Orchestrator {
 
         if let Some(cfg) = merged.tcp_send_msg {
             let rt = rt.clone();
-            TcpSendMsgProbe::new(cfg.to_bpf_ports()).attach(ebpf, move |e| rt.dispatch(&e))?;
+            TcpSendMsgProbe::new(cfg.to_bpf_ports(), self.tcp_sendmsg_sample_rate)
+                .attach(ebpf, move |e| rt.dispatch(&e))?;
         }
 
         if merged.sock_def_readable {

@@ -1,13 +1,18 @@
 use crate::modules::Module;
 use crate::probes::{ProbeEvent, ProbeRequirement};
 use crate::sink::telegraf::TelegrafMetricsPusher;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+const PENDING_TTL: Duration = Duration::from_secs(30);
 
 pub struct MysqlModule {
     sink: Arc<TelegrafMetricsPusher>,
-    // socket_ptr → (dest_port, send_timestamp_ns, query)
-    pending: HashMap<u64, (u16, u64, String)>,
+    // socket_ptr → (dest_port, send_timestamp_ns, query, inserted_at)
+    pending: HashMap<u64, (u16, u64, String, Instant)>,
+    // insertion-ordered expiry queue; drained from the front on each insert
+    expiry: VecDeque<(Instant, u64)>,
 }
 
 impl MysqlModule {
@@ -15,6 +20,7 @@ impl MysqlModule {
         Self {
             sink,
             pending: HashMap::new(),
+            expiry: VecDeque::new(),
         }
     }
 }
@@ -41,11 +47,27 @@ impl Module for MysqlModule {
                 if payload.get(4) != Some(&0x03) {
                     return;
                 }
+
+                // Drain expired entries from the front of the expiry queue.
+                let now = Instant::now();
+                while let Some((ts, _ptr)) = self.expiry.front() {
+                    if now.duration_since(*ts) < PENDING_TTL {
+                        break;
+                    }
+                    let (ts, ptr) = self.expiry.pop_front().unwrap();
+                    // Guard against socket ptr reuse: only evict if the stored
+                    // Instant matches the one we're expiring.
+                    if self.pending.get(&ptr).map_or(false, |e| e.3 == ts) {
+                        self.pending.remove(&ptr);
+                    }
+                }
+
                 let query = String::from_utf8_lossy(&payload[5..]).into_owned();
-                self.pending.insert(*socket_ptr, (*dest_port, *timestamp_ns, query));
+                self.pending.insert(*socket_ptr, (*dest_port, *timestamp_ns, query, now));
+                self.expiry.push_back((now, *socket_ptr));
             }
             ProbeEvent::SockDefReadable { socket_ptr, timestamp_ns } => {
-                if let Some((dest_port, send_ns, query)) = self.pending.remove(socket_ptr) {
+                if let Some((dest_port, send_ns, query, _)) = self.pending.remove(socket_ptr) {
                     let latency_ms = timestamp_ns.saturating_sub(send_ns) as f64 / 1_000_000.0;
                     let normalized = normalize_query(&query);
                     log::info!(
