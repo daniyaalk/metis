@@ -8,11 +8,6 @@ use aya_ebpf::macros::{kprobe, map, tracepoint};
 use aya_ebpf::maps::RingBuf;
 use aya_ebpf::programs::{ProbeContext, TracePointContext};
 
-enum RetransmitMode {
-    SKB,
-    SYNACK,
-}
-
 #[map(name = "EVENTS")]
 pub static mut EVENTS: RingBuf = RingBuf::with_byte_size(1024 * 256, 0);
 
@@ -59,8 +54,8 @@ pub static mut EVENTS: RingBuf = RingBuf::with_byte_size(1024 * 256, 0);
 #[kprobe]
 pub fn tcp_sendmsg(ctx: ProbeContext) -> u32 {
     match kprobes::tcp_sendmsg::tcp_sendmsg(ctx) {
-        Ok(ret) => 0,
-        Err(ret) => 0,
+        Ok(_) => 0,
+        Err(_) => 0,
     }
 }
 

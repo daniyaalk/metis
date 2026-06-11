@@ -102,36 +102,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aya-log-ebpf"
-version = "0.1.2"
-source = "git+https://github.com/aya-rs/aya#a0b8d4911879f40f3127791ec474d438c23b59ff"
-dependencies = [
- "aya-ebpf",
- "aya-log-common",
- "aya-log-ebpf-macros",
-]
-
-[[package]]
-name = "aya-log-ebpf-macros"
-version = "0.1.1"
-source = "git+https://github.com/aya-rs/aya#a0b8d4911879f40f3127791ec474d438c23b59ff"
-dependencies = [
- "aya-log-common",
- "aya-log-parser",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "aya-log-parser"
-version = "0.1.14"
-source = "git+https://github.com/aya-rs/aya#a0b8d4911879f40f3127791ec474d438c23b59ff"
-dependencies = [
- "aya-log-common",
-]
-
-[[package]]
 name = "aya-obj"
 version = "0.2.2"
 source = "git+https://github.com/aya-rs/aya#a0b8d4911879f40f3127791ec474d438c23b59ff"
@@ -337,7 +307,6 @@ name = "metis-ebpf"
 version = "0.1.0"
 dependencies = [
  "aya-ebpf",
- "aya-log-ebpf",
  "metis-common",
  "which 6.0.3",
 ]

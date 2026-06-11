@@ -2,6 +2,17 @@ use anyhow::{Context as _, anyhow};
 use aya_build::Toolchain;
 
 fn main() -> anyhow::Result<()> {
+    // If METIS_EBPF_PATH is set, use the pre-built object instead of building
+    if let Ok(ebpf_path) = std::env::var("METIS_EBPF_PATH") {
+        let out_dir = std::env::var("OUT_DIR").context("OUT_DIR not set")?;
+        let out_path = std::path::PathBuf::from(&out_dir).join("metis");
+        std::fs::copy(&ebpf_path, &out_path)
+            .with_context(|| format!("failed to copy {ebpf_path} to {out_path:?}"))?;
+        println!("cargo:rerun-if-changed={ebpf_path}");
+        return Ok(());
+    }
+
+    // Otherwise build normally (for local dev)
     let cargo_metadata::Metadata { packages, .. } = cargo_metadata::MetadataCommand::new()
         .no_deps()
         .exec()
