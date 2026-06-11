@@ -30,11 +30,13 @@ pub struct ModulesConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct TcpConfig {
     pub enabled: bool,
+    /// Ports to filter on. Omit or set to [] to capture all ports.
+    pub ports: Option<Vec<u16>>,
 }
 
 impl Default for TcpConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self { enabled: true, ports: None }
     }
 }
 
@@ -42,11 +44,12 @@ impl Default for TcpConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct MysqlConfig {
     pub enabled: bool,
+    pub ports: Vec<u16>,
 }
 
 impl Default for MysqlConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self { enabled: true, ports: vec![3306] }
     }
 }
 
@@ -54,10 +57,11 @@ impl Default for MysqlConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct HttpConfig {
     pub enabled: bool,
+    pub ports: Vec<u16>,
 }
 
 impl Default for HttpConfig {
     fn default() -> Self {
-        Self { enabled: false }
+        Self { enabled: false, ports: vec![80] }
     }
 }

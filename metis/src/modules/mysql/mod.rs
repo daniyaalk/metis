@@ -9,6 +9,7 @@ const PENDING_TTL: Duration = Duration::from_secs(30);
 
 pub struct MysqlModule {
     sink: Arc<TelegrafMetricsPusher>,
+    ports: Vec<u16>,
     // socket_ptr → (dest_port, send_timestamp_ns, query, inserted_at)
     pending: HashMap<u64, (u16, u64, String, Instant)>,
     // insertion-ordered expiry queue; drained from the front on each insert
@@ -16,9 +17,10 @@ pub struct MysqlModule {
 }
 
 impl MysqlModule {
-    pub fn new(sink: Arc<TelegrafMetricsPusher>) -> Self {
+    pub fn new(sink: Arc<TelegrafMetricsPusher>, ports: Vec<u16>) -> Self {
         Self {
             sink,
+            ports,
             pending: HashMap::new(),
             expiry: VecDeque::new(),
         }
@@ -33,7 +35,7 @@ impl Module for MysqlModule {
     fn required_probes(&self) -> Vec<ProbeRequirement> {
         vec![
             ProbeRequirement::TcpSendMsg {
-                dest_ports: Some(vec![3306]),
+                dest_ports: Some(self.ports.clone()),
             },
             ProbeRequirement::SockDefReadable {
                 dest_ports: None,

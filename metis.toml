@@ -5,9 +5,12 @@ tcp_sendmsg_sample_rate = 10.0
 
 [modules.tcp]
 enabled = true
+# ports = [80, 443]  # omit to capture all ports
 
 [modules.mysql]
 enabled = true
+ports = [3306]
 
 [modules.http]
 enabled = false
+ports = [80, 8080]

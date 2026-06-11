@@ -1,7 +1,15 @@
 use crate::modules::Module;
 use crate::probes::{ProbeEvent, ProbeRequirement};
 
-pub struct HttpModule;
+pub struct HttpModule {
+    ports: Vec<u16>,
+}
+
+impl HttpModule {
+    pub fn new(ports: Vec<u16>) -> Self {
+        Self { ports }
+    }
+}
 
 impl Module for HttpModule {
     fn name(&self) -> &'static str {
@@ -10,7 +18,7 @@ impl Module for HttpModule {
 
     fn required_probes(&self) -> Vec<ProbeRequirement> {
         vec![ProbeRequirement::TcpSendMsg {
-            dest_ports: Some(vec![80]),
+            dest_ports: Some(self.ports.clone()),
         }]
     }
 

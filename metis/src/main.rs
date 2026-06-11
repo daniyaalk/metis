@@ -73,13 +73,13 @@ async fn main() -> anyhow::Result<()> {
 
     let mut modules: Vec<Arc<Mutex<dyn Module>>> = Vec::new();
     if cfg.modules.tcp.enabled {
-        modules.push(Arc::new(Mutex::new(TcpModule::new(sink.clone()))));
+        modules.push(Arc::new(Mutex::new(TcpModule::new(sink.clone(), cfg.modules.tcp.ports))));
     }
     if cfg.modules.mysql.enabled {
-        modules.push(Arc::new(Mutex::new(MysqlModule::new(sink.clone()))));
+        modules.push(Arc::new(Mutex::new(MysqlModule::new(sink.clone(), cfg.modules.mysql.ports))));
     }
     if cfg.modules.http.enabled {
-        modules.push(Arc::new(Mutex::new(HttpModule)));
+        modules.push(Arc::new(Mutex::new(HttpModule::new(cfg.modules.http.ports))));
     }
 
     Orchestrator::new(modules, cfg.tcp_sendmsg_sample_rate.clamp(0.0, 100.0))

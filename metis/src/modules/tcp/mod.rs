@@ -5,11 +5,12 @@ use std::sync::Arc;
 
 pub struct TcpModule {
     sink: Arc<TelegrafMetricsPusher>,
+    ports: Option<Vec<u16>>,
 }
 
 impl TcpModule {
-    pub fn new(sink: Arc<TelegrafMetricsPusher>) -> Self {
-        Self { sink }
+    pub fn new(sink: Arc<TelegrafMetricsPusher>, ports: Option<Vec<u16>>) -> Self {
+        Self { sink, ports }
     }
 }
 
@@ -19,11 +20,12 @@ impl Module for TcpModule {
     }
 
     fn required_probes(&self) -> Vec<ProbeRequirement> {
+        let p = self.ports.clone();
         vec![
-            ProbeRequirement::TcpProbe { dest_ports: None },
-            ProbeRequirement::TcpRetransmitSkb { dest_ports: None },
-            ProbeRequirement::TcpSendReset { dest_ports: None },
-            ProbeRequirement::TcpReceiveReset { dest_ports: None },
+            ProbeRequirement::TcpProbe { dest_ports: p.clone() },
+            ProbeRequirement::TcpRetransmitSkb { dest_ports: p.clone() },
+            ProbeRequirement::TcpSendReset { dest_ports: p.clone() },
+            ProbeRequirement::TcpReceiveReset { dest_ports: p },
         ]
     }
 
