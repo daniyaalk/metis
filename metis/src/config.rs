@@ -6,6 +6,7 @@ pub struct Config {
     /// Percentage of tcp_sendmsg events to capture (0.0–100.0). Supports fractional values.
     /// Applies to all modules that use the tcp_sendmsg probe.
     pub tcp_sendmsg_sample_rate: f32,
+    pub telegraf: TelegrafConfig,
     pub modules: ModulesConfig,
 }
 
@@ -13,8 +14,22 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             tcp_sendmsg_sample_rate: 100.0,
+            telegraf: TelegrafConfig::default(),
             modules: ModulesConfig::default(),
         }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TelegrafConfig {
+    /// UDP address of the Telegraf InfluxDB line-protocol listener.
+    pub address: String,
+}
+
+impl Default for TelegrafConfig {
+    fn default() -> Self {
+        Self { address: "127.0.0.1:8125".to_string() }
     }
 }
 

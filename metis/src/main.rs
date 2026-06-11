@@ -69,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let sink = Arc::new(TelegrafMetricsPusher::new("127.0.0.1:8125").await?);
+    let sink = Arc::new(TelegrafMetricsPusher::new(&cfg.telegraf.address).await?);
 
     let mut modules: Vec<Arc<Mutex<dyn Module>>> = Vec::new();
     if cfg.modules.tcp.enabled {

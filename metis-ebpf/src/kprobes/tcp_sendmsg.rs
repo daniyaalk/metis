@@ -1,6 +1,6 @@
 use aya_ebpf::helpers::{bpf_get_prandom_u32, bpf_ktime_get_ns, bpf_probe_read_kernel, bpf_probe_read_user_buf};
 use aya_ebpf::macros::map;
-use aya_ebpf::maps::{Array, HashMap, PerCpuArray, RingBuf};
+use aya_ebpf::maps::{Array, HashMap, LruHashMap, PerCpuArray, RingBuf};
 use aya_ebpf::programs::ProbeContext;
 use metis_common::KProbeChunk;
 
@@ -33,6 +33,11 @@ static mut SCRATCH: PerCpuArray<KProbeChunk> = PerCpuArray::with_max_entries(1, 
 
 #[map(name = "TCP_SENDMSG_RINGBUF")]
 pub static mut TCP_SENDMSG_RINGBUF: RingBuf = RingBuf::with_byte_size(512 * 1024, 0);
+
+/// Sockets with an in-flight sampled query. Populated by tcp_sendmsg; consumed by sock_def_readable.
+/// LRU eviction prevents unbounded growth if responses never arrive (dropped connections, etc.).
+#[map(name = "TRACKED_SOCKETS")]
+pub static mut TRACKED_SOCKETS: LruHashMap<u64, u8> = LruHashMap::with_max_entries(8192, 0);
 
 /// Sampling threshold scaled to [0, u32::MAX].
 /// u32::MAX means "capture everything" (default when unset).
@@ -125,6 +130,8 @@ pub fn tcp_sendmsg(ctx: ProbeContext) -> Result<u32, u32> {
     unsafe {
         #[allow(static_mut_refs)]
         let _ = TCP_SENDMSG_RINGBUF.output::<KProbeChunk>(&*scratch, 0);
+        #[allow(static_mut_refs)]
+        let _ = TRACKED_SOCKETS.insert(&(sock as u64), &1u8, 0);
     }
 
     Ok(0)

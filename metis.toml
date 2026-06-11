@@ -1,7 +1,11 @@
 # Percentage of tcp_sendmsg events to capture (0.0–100.0). Supports fractional values.
 # Shared by all modules that use the tcp_sendmsg probe (mysql, http).
 # e.g. 0.01 = 1 in 10000 events; 10.0 = 1 in 10 events; 100.0 = all events.
-tcp_sendmsg_sample_rate = 10.0
+tcp_sendmsg_sample_rate = 100.0
+
+[telegraf]
+# UDP address of the Telegraf InfluxDB line-protocol listener.
+address = "127.0.0.1:8125"
 
 [modules.tcp]
 enabled = true

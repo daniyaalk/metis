@@ -46,7 +46,7 @@ impl Module for MysqlModule {
     fn on_event(&mut self, event: &ProbeEvent) {
         match event {
             ProbeEvent::TcpSendMsg { dest_port, socket_ptr, timestamp_ns, payload } => {
-                if payload.get(4) != Some(&0x03) {
+                if payload.get(3) != Some(&0x00) && payload.get(4) != Some(&0x03) {
                     return;
                 }
 
@@ -70,13 +70,15 @@ impl Module for MysqlModule {
             }
             ProbeEvent::SockDefReadable { socket_ptr, timestamp_ns } => {
                 if let Some((dest_port, send_ns, query, _)) = self.pending.remove(socket_ptr) {
-                    let latency_ms = timestamp_ns.saturating_sub(send_ns) as f64 / 1_000_000.0;
-                    let normalized = normalize_query(&query);
-                    log::info!(
-                        "[mysql] port={} latency={:.3}ms query={:?}",
-                        dest_port, latency_ms, normalized,
-                    );
-                    self.sink.push_mysql_query_latency(dest_port, &normalized, latency_ms);
+                    if !query.is_empty() {
+                        let latency_ms = timestamp_ns.saturating_sub(send_ns) as f64 / 1_000_000.0;
+                        let normalized = normalize_query(&query);
+                        log::info!(
+                            "[mysql] port={} latency={:.3}ms query={:?}",
+                            dest_port, latency_ms, normalized,
+                        );
+                        self.sink.push_mysql_query_latency(dest_port, &normalized, latency_ms);
+                    }
                 }
             }
             _ => {}
