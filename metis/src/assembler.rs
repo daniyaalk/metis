@@ -4,13 +4,12 @@ use std::collections::HashMap;
 
 struct AssemblyBuffer {
     dest_port: u16,
+    socket_ptr: u64,
+    timestamp_ns: u64,
     data: Vec<u8>,
 }
 
 /// Reassembles chunked kprobe payloads into complete `ProbeEvent`s.
-///
-/// Each instance is single-threaded and lives inside the event-loop task for
-/// one kprobe ring buffer, so no locking is needed.
 pub struct KProbeAssembler {
     sessions: HashMap<u64, AssemblyBuffer>,
 }
@@ -22,14 +21,14 @@ impl KProbeAssembler {
         }
     }
 
-    /// Feed one chunk in. Returns a complete `ProbeEvent` once the final chunk
-    /// for a session arrives; returns `None` for intermediate chunks.
     pub fn ingest(&mut self, chunk: &KProbeChunk) -> Option<ProbeEvent> {
         let session = self
             .sessions
-            .entry(chunk.session_id)
+            .entry(chunk.socket_ptr)
             .or_insert_with(|| AssemblyBuffer {
                 dest_port: chunk.dest_port,
+                socket_ptr: chunk.socket_ptr,
+                timestamp_ns: chunk.timestamp_ns,
                 data: Vec::new(),
             });
 
@@ -39,9 +38,11 @@ impl KProbeAssembler {
         }
 
         if chunk.complete {
-            let buf = self.sessions.remove(&chunk.session_id)?;
+            let buf = self.sessions.remove(&chunk.socket_ptr)?;
             Some(ProbeEvent::TcpSendMsg {
                 dest_port: buf.dest_port,
+                socket_ptr: buf.socket_ptr,
+                timestamp_ns: buf.timestamp_ns,
                 payload: buf.data,
             })
         } else {

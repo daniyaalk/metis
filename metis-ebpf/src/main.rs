@@ -59,6 +59,14 @@ pub fn tcp_sendmsg(ctx: ProbeContext) -> u32 {
     }
 }
 
+#[kprobe]
+pub fn sock_def_readable(ctx: ProbeContext) -> u32 {
+    match kprobes::sock_def_readable::sock_def_readable(ctx) {
+        Ok(_) => 0,
+        Err(_) => 0,
+    }
+}
+
 #[tracepoint]
 pub fn tcp_probe(ctx: TracePointContext) -> u32 {
     match tracepoints::tcp_probe::tcp_probe(ctx) {

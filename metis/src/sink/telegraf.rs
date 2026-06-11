@@ -1,4 +1,11 @@
 use crate::probes::tracepoints::tcp_probe::ReadableTCPProbeEvent;
+
+/// Escapes a string for use as an InfluxDB line-protocol tag value.
+fn escape_tag(s: &str) -> String {
+    s.replace(',', "\\,")
+        .replace('=', "\\=")
+        .replace(' ', "\\ ")
+}
 use crate::probes::tracepoints::tcp_receive_reset::ReadableTcpReceiveResetEvent;
 use crate::probes::tracepoints::tcp_retransmit_skb::ReadableTCPRetransmitSkbEvent;
 use crate::probes::tracepoints::tcp_send_reset::ReadableTcpSendResetEvent;
@@ -78,6 +85,16 @@ impl TelegrafMetricsPusher {
             "bpf_tcp_receive_reset,src_ip={},dest_ip={},family={},\
              pid={},src_port={},dest_port={},skaddr={},sock_cookie={} value=1u",
             e.src_ip, e.dst_ip, e.family, e.pid, e.sport, e.dport, e.skaddr, e.sock_cookie,
+        );
+        self.send(line);
+    }
+
+    pub fn push_mysql_query_latency(&self, port: u16, query: &str, latency_ms: f64) {
+        let line = format!(
+            "mysql_query_latency,port={},query={} latency_ms={}",
+            port,
+            escape_tag(query),
+            latency_ms,
         );
         self.send(line);
     }

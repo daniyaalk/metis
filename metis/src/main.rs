@@ -50,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
 
     let modules: Vec<Arc<Mutex<dyn Module>>> = vec![
         Arc::new(Mutex::new(TcpModule::new(sink.clone()))),
-        Arc::new(Mutex::new(MysqlModule)),
+        Arc::new(Mutex::new(MysqlModule::new(sink.clone()))),
         // Arc::new(Mutex::new(HttpModule)),
     ];
 

@@ -1,4 +1,4 @@
-use aya_ebpf::helpers::{bpf_get_current_pid_tgid, bpf_probe_read_kernel, bpf_probe_read_user_buf};
+use aya_ebpf::helpers::{bpf_ktime_get_ns, bpf_probe_read_kernel, bpf_probe_read_user_buf};
 use aya_ebpf::macros::map;
 use aya_ebpf::maps::{HashMap, PerCpuArray, RingBuf};
 use aya_ebpf::programs::ProbeContext;
@@ -100,11 +100,11 @@ pub fn tcp_sendmsg(ctx: ProbeContext) -> Result<u32, u32> {
     let read_len = count.min(MAX_PAYLOAD);
 
     unsafe {
-        (*scratch).session_id = bpf_get_current_pid_tgid();
+        (*scratch).socket_ptr = sock as u64;
+        (*scratch).timestamp_ns = bpf_ktime_get_ns();
         (*scratch).dest_port = port;
         (*scratch).complete = true;
         (*scratch).len = read_len as u16;
-        // bpf_probe_read_user_buf writes directly into map memory.
         let _ = bpf_probe_read_user_buf(data_ptr, &mut (&mut (*scratch).data)[..read_len]);
     }
 

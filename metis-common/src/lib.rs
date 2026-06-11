@@ -9,15 +9,27 @@ pub struct TCPProbeEvent {
     pub ctx_buf: [u8; 150],
 }
 
+/// Emitted by sock_def_readable when the first inbound packet arrives on a
+/// tracked socket. Userspace correlates with KProbeChunk via socket_ptr.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct TcpResponseEvent {
+    pub socket_ptr: u64,
+    pub timestamp_ns: u64,
+}
+
 /// Emitted by kprobes. Due to the 512-byte eBPF stack limit, large payloads
-/// are split across multiple chunks sharing the same `session_id`. The final
+/// are split across multiple chunks sharing the same `socket_ptr`. The final
 /// (or only) chunk carries `complete == true`. Userspace must concatenate all
 /// chunks for a session before dispatching the completed event.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct KProbeChunk {
-    /// Links chunks belonging to the same logical event (e.g. `pid_tgid`).
-    pub session_id: u64,
+    /// Socket pointer — stable connection identifier, used for reassembly and
+    /// for correlating with TcpResponseEvent in userspace.
+    pub socket_ptr: u64,
+    /// Kernel timestamp (bpf_ktime_get_ns) at the moment of the send.
+    pub timestamp_ns: u64,
     /// Destination port — present on every chunk so routing can start early.
     pub dest_port: u16,
     /// True when this is the last (or only) chunk for this session.

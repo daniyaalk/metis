@@ -15,6 +15,9 @@ pub enum ProbeRequirement {
     TcpRetransmitSkb { dest_ports: Option<Vec<u16>> },
     TcpSendReset { dest_ports: Option<Vec<u16>> },
     TcpReceiveReset { dest_ports: Option<Vec<u16>> },
+    /// Fires when the first response packet arrives on a tracked socket.
+    /// Filtering is implicit via QUERY_START_TIMES (populated by TcpSendMsg).
+    SockDefReadable { dest_ports: Option<Vec<u16>> },
 }
 
 /// Probe identity without payload — used as the routing table key.
@@ -25,6 +28,7 @@ pub enum ProbeType {
     TcpRetransmitSkb,
     TcpSendReset,
     TcpReceiveReset,
+    SockDefReadable,
 }
 
 /// A fully-decoded, module-ready event.
@@ -35,7 +39,9 @@ pub enum ProbeEvent {
     TcpSendReset(ReadableTcpSendResetEvent),
     TcpReceiveReset(ReadableTcpReceiveResetEvent),
     /// Reassembled payload from one or more `KProbeChunk`s.
-    TcpSendMsg { dest_port: u16, payload: Vec<u8> },
+    TcpSendMsg { dest_port: u16, socket_ptr: u64, timestamp_ns: u64, payload: Vec<u8> },
+    /// First inbound packet on a tracked socket; correlate with TcpSendMsg via socket_ptr.
+    SockDefReadable { socket_ptr: u64, timestamp_ns: u64 },
 }
 
 impl ProbeEvent {
@@ -46,6 +52,7 @@ impl ProbeEvent {
             ProbeEvent::TcpSendReset(_) => ProbeType::TcpSendReset,
             ProbeEvent::TcpReceiveReset(_) => ProbeType::TcpReceiveReset,
             ProbeEvent::TcpSendMsg { .. } => ProbeType::TcpSendMsg,
+            ProbeEvent::SockDefReadable { .. } => ProbeType::SockDefReadable,
         }
     }
 
@@ -56,6 +63,7 @@ impl ProbeEvent {
             ProbeEvent::TcpSendReset(e) => Some(e.dst_port),
             ProbeEvent::TcpReceiveReset(e) => Some(e.dport),
             ProbeEvent::TcpSendMsg { dest_port, .. } => Some(*dest_port),
+            ProbeEvent::SockDefReadable { .. } => None,
         }
     }
 }

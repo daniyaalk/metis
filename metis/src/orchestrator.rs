@@ -1,4 +1,5 @@
 use crate::modules::Module;
+use crate::probes::kprobes::sock_def_readable::SockDefReadableProbe;
 use crate::probes::kprobes::tcp_sendmsg::TcpSendMsgProbe;
 use crate::probes::tracepoints::tcp_probe::TcpProbe;
 use crate::probes::tracepoints::tcp_receive_reset::TcpReceiveReset;
@@ -49,6 +50,11 @@ impl Orchestrator {
             TcpSendMsgProbe::new(cfg.to_bpf_ports()).attach(ebpf, move |e| rt.dispatch(&e))?;
         }
 
+        if merged.sock_def_readable {
+            let rt = rt.clone();
+            SockDefReadableProbe.attach(ebpf, move |e| rt.dispatch(&e))?;
+        }
+
         Ok(())
     }
 
@@ -78,6 +84,10 @@ impl Orchestrator {
                     ProbeRequirement::TcpSendMsg { dest_ports } => {
                         absorb(&mut cfg.tcp_send_msg, dest_ports.clone());
                         register_ports(&mut table, ProbeType::TcpSendMsg, dest_ports, idx);
+                    }
+                    ProbeRequirement::SockDefReadable { dest_ports } => {
+                        cfg.sock_def_readable = true;
+                        register_ports(&mut table, ProbeType::SockDefReadable, dest_ports, idx);
                     }
                 }
             }
@@ -113,6 +123,7 @@ struct MergedConfigs {
     tcp_retransmit_skb: Option<PortConfig>,
     tcp_receive_reset: Option<PortConfig>,
     tcp_send_msg: Option<PortConfig>,
+    sock_def_readable: bool,
 }
 
 /// Merges `incoming` (from one module's `ProbeRequirement`) into `existing`.
