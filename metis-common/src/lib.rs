@@ -21,6 +21,23 @@ pub struct TcpResponseEvent {
     pub timestamp_ns: u64,
 }
 
+/// Kernel field offsets for `iov_iter`, detected at startup from BTF.
+/// Stored in the `IOV_LAYOUT` BPF map; all offsets are in bytes from `msghdr` base.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct IovLayout {
+    pub iter_type_off:  u32,
+    pub iov_offset_off: u32,
+    pub count_off:      u32,
+    pub ptr_off:        u32,
+    pub iter_iovec:     u8,
+    pub iter_ubuf:      u8,
+    pub _pad:           u16,
+}
+
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for IovLayout {}
+
 /// Emitted by kprobes. Due to the 512-byte eBPF stack limit, large payloads
 /// are split across multiple chunks sharing the same `socket_ptr`. The final
 /// (or only) chunk carries `complete == true`. Userspace must concatenate all
