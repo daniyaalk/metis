@@ -9,7 +9,7 @@ pub static mut TCP_PROBE_RINGBUF: RingBuf = RingBuf::with_byte_size(1024 * 64, 0
 pub fn tcp_probe(ctx: TracePointContext) -> Result<u32, u32> {
     let pid_tgid = aya_ebpf::helpers::bpf_get_current_pid_tgid();
 
-    if let Ok(buf) = unsafe { ctx.read_at(0) } {
+    if let Ok(buf) = unsafe { ctx.read_at::<[u8; 152]>(0) } {
         unsafe {
             #[allow(static_mut_refs)]
             let _ = TCP_PROBE_RINGBUF.output::<TCPProbeEvent>(

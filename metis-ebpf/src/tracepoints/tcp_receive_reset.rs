@@ -11,7 +11,7 @@ static mut PORTS: HashMap<u16, u8> =
 pub static mut TCP_RECEIVE_RESET_RINGBUF: RingBuf = RingBuf::with_byte_size(1024 * 64, 0);
 
 pub fn tcp_receive_reset(ctx: TracePointContext) -> Result<u32, u32> {
-    if let Ok(buf) = unsafe { ctx.read_at::<[u8; 150]>(0) } {
+    if let Ok(buf) = unsafe { ctx.read_at::<[u8; 152]>(0) } {
         let port: u16 = u16::from_ne_bytes(buf[18..20].try_into().unwrap());
 
         #[allow(static_mut_refs)]

@@ -6,7 +6,10 @@
 pub struct TCPProbeEvent {
     pub pid: u32,
     pub tgid: u32,
-    pub ctx_buf: [u8; 150],
+    // 152 bytes makes sizeof = 4+4+152 = 160, exactly divisible by 4 with no
+    // trailing padding. Uninitialized padding bytes would fail the BPF verifier
+    // when ringbuf.output reads the full sizeof(TCPProbeEvent) off the stack.
+    pub ctx_buf: [u8; 152],
 }
 
 /// Emitted by sock_def_readable when the first inbound packet arrives on a

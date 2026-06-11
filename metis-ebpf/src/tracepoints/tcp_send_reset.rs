@@ -7,7 +7,7 @@ use metis_common::TCPProbeEvent;
 pub static mut TCP_SEND_RESET_RINGBUF: RingBuf = RingBuf::with_byte_size(1024 * 64, 0);
 
 pub fn tcp_send_reset(ctx: TracePointContext) -> Result<u32, u32> {
-    if let Ok(buf) = unsafe { ctx.read_at::<[u8; 150]>(0) } {
+    if let Ok(buf) = unsafe { ctx.read_at::<[u8; 152]>(0) } {
         let pid_tgid = aya_ebpf::helpers::bpf_get_current_pid_tgid();
 
         unsafe {
