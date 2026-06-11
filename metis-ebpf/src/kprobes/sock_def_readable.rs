@@ -2,6 +2,7 @@ use aya_ebpf::helpers::bpf_ktime_get_ns;
 use aya_ebpf::macros::map;
 use aya_ebpf::maps::RingBuf;
 use aya_ebpf::programs::ProbeContext;
+use aya_log_ebpf::trace;
 use metis_common::TcpResponseEvent;
 
 use crate::kprobes::tcp_sendmsg::TRACKED_SOCKETS;
@@ -16,7 +17,7 @@ pub fn sock_def_readable(ctx: ProbeContext) -> Result<u32, u32> {
     // Only emit for sockets where we saw an outbound sampled query.
     #[allow(static_mut_refs)]
     if unsafe { TRACKED_SOCKETS.get(&sk_ptr).is_none() } {
-        // trace!(&ctx, "sock_def_readable: skipping untracked socket {}", sk_ptr);
+        trace!(&ctx, "sock_def_readable: skipping untracked socket {:x}", sk_ptr);
         return Ok(0);
     }
 

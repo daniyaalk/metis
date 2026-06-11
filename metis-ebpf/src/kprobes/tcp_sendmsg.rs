@@ -1,7 +1,11 @@
-use aya_ebpf::helpers::{bpf_get_prandom_u32, bpf_ktime_get_ns, bpf_probe_read_kernel, bpf_probe_read_user_buf};
+use aya_ebpf::helpers::{
+    bpf_get_prandom_u32, bpf_ktime_get_ns, bpf_probe_read_kernel, bpf_probe_read_kernel_buf,
+    bpf_probe_read_user_buf,
+};
 use aya_ebpf::macros::map;
 use aya_ebpf::maps::{Array, HashMap, LruHashMap, PerCpuArray, RingBuf};
 use aya_ebpf::programs::ProbeContext;
+// use aya_log_ebpf::debug;
 use metis_common::KProbeChunk;
 
 const SOCK_DPORT_OFFSET: usize = 6;
@@ -22,6 +26,10 @@ const ITER_IOVEC: u8 = 1;
 const IOVEC_BASE_OFF: usize = 0;
 
 const MAX_PAYLOAD: usize = 1024;
+
+// On x86_64, canonical kernel addresses have the top bits set (>= 0xffff000000000000).
+// bpf_probe_read_user_buf fails with EFAULT for kernel addresses; use the kernel variant instead.
+const KERNEL_ADDR_THRESHOLD: u64 = 0xffff_0000_0000_0000;
 
 #[map(name = "TCP_SENDMSG_PORTS")]
 static mut PORTS: HashMap<u16, u8> =
@@ -87,7 +95,7 @@ pub fn tcp_sendmsg(ctx: ProbeContext) -> Result<u32, u32> {
         return Ok(0);
     }
 
-    // ── Resolve the user-space data pointer ───────────────────────────────────
+    // ── Resolve the data pointer ──────────────────────────────────────────────
     let raw_ptr: u64 = unsafe {
         bpf_probe_read_kernel(msg.add(ITER_PTR_OFF) as *const u64)
     }
@@ -118,14 +126,32 @@ pub fn tcp_sendmsg(ctx: ProbeContext) -> Result<u32, u32> {
 
     let read_len = count.min(MAX_PAYLOAD);
 
+    // Use user-space read for user addresses and kernel read for kernel addresses
+    // (e.g. MSG_ZEROCOPY pinned pages land in kernel VA space and fail bpf_probe_read_user).
+    let read_ok: bool;
+    let data_addr = data_ptr as u64;
     unsafe {
         (*scratch).socket_ptr = sock as u64;
         (*scratch).timestamp_ns = bpf_ktime_get_ns();
         (*scratch).dest_port = port;
         (*scratch).complete = true;
-        (*scratch).len = read_len as u16;
-        let _ = bpf_probe_read_user_buf(data_ptr, &mut (&mut (*scratch).data)[..read_len]);
+        read_ok = if data_addr >= KERNEL_ADDR_THRESHOLD {
+            bpf_probe_read_kernel_buf(data_ptr, &mut (&mut (*scratch).data)[..read_len]).is_ok()
+        } else {
+            bpf_probe_read_user_buf(data_ptr, &mut (&mut (*scratch).data)[..read_len]).is_ok()
+        };
+        (*scratch).len = if read_ok { read_len as u16 } else { 0 };
     }
+
+    // debug!(
+    //     &ctx,
+    //     "tcp_sendmsg: iter={} cnt={} off={} ptr={:x} ok={}",
+    //     iter_type,
+    //     count as u64,
+    //     iov_offset as u64,
+    //     data_addr,
+    //     read_ok as u8,
+    // );
 
     unsafe {
         #[allow(static_mut_refs)]

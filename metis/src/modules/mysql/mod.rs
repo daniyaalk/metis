@@ -46,7 +46,7 @@ impl Module for MysqlModule {
     fn on_event(&mut self, event: &ProbeEvent) {
         match event {
             ProbeEvent::TcpSendMsg { dest_port, socket_ptr, timestamp_ns, payload } => {
-                if payload.get(3) != Some(&0x00) && payload.get(4) != Some(&0x03) {
+                if payload.get(3) != Some(&0x00) || payload.get(4) != Some(&0x03) {
                     return;
                 }
 
