@@ -92,7 +92,13 @@ impl TelegrafMetricsPusher {
     pub fn push_mysql_query_latency(&self, dest_ip: [u8; 16], ip_family: u8, port: u16, db: &str, query: &str, latency_ms: f64) {
         let ip_tag = match ip_family {
             4 => format!(",db_ip={}", std::net::Ipv4Addr::new(dest_ip[0], dest_ip[1], dest_ip[2], dest_ip[3])),
-            6 => format!(",db_ip={}", std::net::Ipv6Addr::from(dest_ip)),
+            6 => {
+                let v6 = std::net::Ipv6Addr::from(dest_ip);
+                match v6.to_ipv4_mapped() {
+                    Some(v4) => format!(",db_ip={}", v4),
+                    None => format!(",db_ip={}", v6),
+                }
+            }
             _ => String::new(),
         };
         let db_tag = if db.is_empty() {

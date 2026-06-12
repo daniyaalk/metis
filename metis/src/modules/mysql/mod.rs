@@ -103,7 +103,13 @@ impl Module for MysqlModule {
 fn fmt_ip(ip: [u8; 16], family: u8) -> std::net::IpAddr {
     match family {
         4 => std::net::IpAddr::V4(std::net::Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3])),
-        6 => std::net::IpAddr::V6(std::net::Ipv6Addr::from(ip)),
+        6 => {
+            let v6 = std::net::Ipv6Addr::from(ip);
+            match v6.to_ipv4_mapped() {
+                Some(v4) => std::net::IpAddr::V4(v4),
+                None => std::net::IpAddr::V6(v6),
+            }
+        }
         _ => std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
     }
 }
