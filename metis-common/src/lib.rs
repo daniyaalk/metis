@@ -38,6 +38,19 @@ pub struct IovLayout {
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for IovLayout {}
 
+/// Kernel field offsets for `struct sock_common`, detected at startup from BTF.
+/// Stored in the `SOCK_LAYOUT` BPF map.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct SockLayout {
+    /// Byte offset of `skc_v6_daddr` (`struct in6_addr`) from the start of `struct sock`.
+    pub v6_daddr_off: u32,
+    pub _pad: [u8; 4],
+}
+
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for SockLayout {}
+
 /// Emitted by kprobes. Due to the 512-byte eBPF stack limit, large payloads
 /// are split across multiple chunks sharing the same `socket_ptr`. The final
 /// (or only) chunk carries `complete == true`. Userspace must concatenate all
@@ -50,10 +63,14 @@ pub struct KProbeChunk {
     pub socket_ptr: u64,
     /// Kernel timestamp (bpf_ktime_get_ns) at the moment of the send.
     pub timestamp_ns: u64,
-    /// Destination IPv4 address (skc_daddr, network byte order). Zero for IPv6.
-    pub dest_ip: u32,
+    /// Destination IP address in network byte order.
+    /// For IPv4 the first 4 bytes hold the address; remaining bytes are zero.
+    /// For IPv6 all 16 bytes are used.
+    pub dest_ip: [u8; 16],
     /// Destination port — present on every chunk so routing can start early.
     pub dest_port: u16,
+    /// 4 = IPv4, 6 = IPv6, 0 = unknown/unread.
+    pub ip_family: u8,
     /// True when this is the last (or only) chunk for this session.
     pub complete: bool,
     /// Number of valid bytes in `data`.

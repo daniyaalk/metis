@@ -1,34 +1,44 @@
-use metis_common::IovLayout;
+use metis_common::{IovLayout, SockLayout};
 
-/// Detect `iov_iter` field offsets from the kernel's BTF type information.
-/// Falls back to Linux 6.4+ defaults if BTF is unavailable or parsing fails.
-pub fn detect_iov_layout() -> IovLayout {
-    match try_detect() {
-        Some(layout) => {
-            log::info!(
-                "iov_iter layout: iter_type@{} iov_offset@{} count@{} ptr@{} ITER_IOVEC={} ITER_UBUF={}",
-                layout.iter_type_off, layout.iov_offset_off,
-                layout.count_off, layout.ptr_off,
-                layout.iter_iovec, layout.iter_ubuf,
-            );
-            layout
-        }
-        None => {
-            log::warn!("BTF iov_iter detection failed; using Linux 6.4+ layout defaults");
-            IovLayout {
-                iter_type_off:  16,
-                iov_offset_off: 24,
-                count_off:      32,
-                ptr_off:        40,
-                iter_iovec:     0,
-                iter_ubuf:      1,
-                _pad:           0,
-            }
-        }
-    }
+/// Parse BTF once and return both layouts. Falls back to hardcoded defaults on failure.
+pub fn detect_layouts() -> (IovLayout, SockLayout) {
+    let default_iov = IovLayout {
+        iter_type_off:  16,
+        iov_offset_off: 24,
+        count_off:      32,
+        ptr_off:        40,
+        iter_iovec:     0,
+        iter_ubuf:      1,
+        _pad:           0,
+    };
+    // skc_v6_daddr offset: 56 is the typical value on x86_64 with CONFIG_NET_NS+CONFIG_IPV6.
+    let default_sock = SockLayout { v6_daddr_off: 56, _pad: [0; 4] };
+
+    let Some((tb, sb, idx)) = load_btf() else {
+        log::warn!("BTF unavailable; using hardcoded layout defaults");
+        return (default_iov, default_sock);
+    };
+
+    let iov = detect_iov(&tb, &sb, &idx).unwrap_or_else(|| {
+        log::warn!("BTF iov_iter detection failed; using Linux 6.4+ defaults");
+        default_iov
+    });
+    let sock = detect_sock(&tb, &sb, &idx).unwrap_or_else(|| {
+        log::warn!("BTF sock_common detection failed; using offset 56 for skc_v6_daddr");
+        default_sock
+    });
+
+    log::info!(
+        "iov_iter layout: iter_type@{} iov_offset@{} count@{} ptr@{} ITER_IOVEC={} ITER_UBUF={}",
+        iov.iter_type_off, iov.iov_offset_off, iov.count_off, iov.ptr_off,
+        iov.iter_iovec, iov.iter_ubuf,
+    );
+    log::info!("sock_common layout: skc_v6_daddr@{}", sock.v6_daddr_off);
+
+    (iov, sock)
 }
 
-fn try_detect() -> Option<IovLayout> {
+fn load_btf() -> Option<(Vec<u8>, Vec<u8>, Vec<usize>)> {
     let data = std::fs::read("/sys/kernel/btf/vmlinux").ok()?;
     if data.len() < 24 { return None; }
     if u16::from_le_bytes([data[0], data[1]]) != 0xEB9F { return None; }
@@ -43,28 +53,25 @@ fn try_detect() -> Option<IovLayout> {
     let ss = hdr_len + str_off;
     if ts + type_len > data.len() || ss + str_len > data.len() { return None; }
 
-    let tb = &data[ts..ts + type_len];
-    let sb = &data[ss..ss + str_len];
+    let tb  = data[ts..ts + type_len].to_vec();
+    let sb  = data[ss..ss + str_len].to_vec();
+    let idx = build_index(&tb);
+    Some((tb, sb, idx))
+}
 
-    let idx = build_index(tb);
+fn detect_iov(tb: &[u8], sb: &[u8], idx: &[usize]) -> Option<IovLayout> {
+    let msghdr_off   = find_struct(tb, sb, idx, "msghdr")?;
+    let iov_iter_off = find_struct(tb, sb, idx, "iov_iter")?;
 
-    let msghdr_off   = find_struct(tb, sb, &idx, "msghdr")?;
-    let iov_iter_off = find_struct(tb, sb, &idx, "iov_iter")?;
+    let msg_iter_bytes  = (member_bit_off(tb, sb, idx, msghdr_off,   "msg_iter",   0)? / 8) as u32;
+    let iter_type_bits  = member_bit_off(tb, sb, idx, iov_iter_off, "iter_type",  0)?;
+    let iov_offset_bits = member_bit_off(tb, sb, idx, iov_iter_off, "iov_offset", 0)?;
+    let count_bits      = member_bit_off(tb, sb, idx, iov_iter_off, "count",      0)?;
+    let ptr_bits        = member_bit_off(tb, sb, idx, iov_iter_off, "ubuf",  0)
+        .or_else(|| member_bit_off(tb, sb, idx, iov_iter_off, "__iov", 0))
+        .or_else(|| member_bit_off(tb, sb, idx, iov_iter_off, "iov",   0))?;
 
-    let msg_iter_bits   = member_bit_off(tb, sb, &idx, msghdr_off,   "msg_iter",   0)?;
-    let msg_iter_bytes  = (msg_iter_bits / 8) as u32;
-
-    let iter_type_bits  = member_bit_off(tb, sb, &idx, iov_iter_off, "iter_type",  0)?;
-    let iov_offset_bits = member_bit_off(tb, sb, &idx, iov_iter_off, "iov_offset", 0)?;
-    let count_bits      = member_bit_off(tb, sb, &idx, iov_iter_off, "count",      0)?;
-
-    // Try multiple historical names for the data pointer field
-    let ptr_bits = member_bit_off(tb, sb, &idx, iov_iter_off, "ubuf",  0)
-        .or_else(|| member_bit_off(tb, sb, &idx, iov_iter_off, "__iov", 0))
-        .or_else(|| member_bit_off(tb, sb, &idx, iov_iter_off, "iov",   0))?;
-
-    let (iter_iovec, iter_ubuf) = find_iter_enum_vals(tb, sb, &idx).unwrap_or_else(|| {
-        // Infer from layout: new kernels have count before ptr
+    let (iter_iovec, iter_ubuf) = find_iter_enum_vals(tb, sb, idx).unwrap_or_else(|| {
         if count_bits < ptr_bits { (0, 1) } else { (1, 0) }
     });
 
@@ -78,6 +85,15 @@ fn try_detect() -> Option<IovLayout> {
         _pad: 0,
     })
 }
+
+fn detect_sock(tb: &[u8], sb: &[u8], idx: &[usize]) -> Option<SockLayout> {
+    // skc_v6_daddr is a direct member of struct sock_common (present with CONFIG_IPV6).
+    let sock_common_off = find_struct(tb, sb, idx, "sock_common")?;
+    let v6_bits = member_bit_off(tb, sb, idx, sock_common_off, "skc_v6_daddr", 0)?;
+    Some(SockLayout { v6_daddr_off: v6_bits / 8, _pad: [0; 4] })
+}
+
+// ── BTF binary parsing helpers ─────────────────────────────────────────────
 
 fn u32_le(data: &[u8], off: usize) -> u32 {
     u32::from_le_bytes(data[off..off + 4].try_into().unwrap())
@@ -127,7 +143,6 @@ fn build_index(tb: &[u8]) -> Vec<usize> {
     idx
 }
 
-/// Follow typedef / const / volatile / restrict chains to reach the underlying type.
 fn resolve(tb: &[u8], idx: &[usize], type_id: u32) -> usize {
     let mut tid = type_id as usize;
     for _ in 0..8 {
@@ -144,15 +159,13 @@ fn resolve(tb: &[u8], idx: &[usize], type_id: u32) -> usize {
 fn find_struct(tb: &[u8], sb: &[u8], idx: &[usize], name: &str) -> Option<usize> {
     for &off in idx.iter().skip(1) {
         if off == usize::MAX || off + 12 > tb.len() { continue; }
-        if btf_kind(tb, off) == 4 {
-            if btf_str(sb, u32_le(tb, off) as usize) == name { return Some(off); }
+        if btf_kind(tb, off) == 4 && btf_str(sb, u32_le(tb, off) as usize) == name {
+            return Some(off);
         }
     }
     None
 }
 
-/// Recursively search for `field` in a struct/union type, following anonymous members.
-/// Returns the bit offset of the field from the start of the enclosing struct.
 fn member_bit_off(tb: &[u8], sb: &[u8], idx: &[usize], type_off: usize, field: &str, depth: u32) -> Option<u32> {
     if depth > 6 || type_off == usize::MAX || type_off + 12 > tb.len() { return None; }
     let kind = btf_kind(tb, type_off);
@@ -168,26 +181,21 @@ fn member_bit_off(tb: &[u8], sb: &[u8], idx: &[usize], type_off: usize, field: &
         let m_name_off = u32_le(tb, m) as usize;
         let m_type_id  = u32_le(tb, m + 4);
         let m_raw_off  = u32_le(tb, m + 8);
-        // When kflag is set, upper 8 bits hold bitfield_size; lower 24 bits are the bit offset.
         let m_bit_off  = if kflag { m_raw_off & 0x00FF_FFFF } else { m_raw_off };
         let m_name     = btf_str(sb, m_name_off);
 
-        if m_name == field {
-            return Some(m_bit_off);
-        }
+        if m_name == field { return Some(m_bit_off); }
 
-        // Anonymous member — recurse into the inner struct/union
         if m_name.is_empty() {
             let inner = resolve(tb, idx, m_type_id);
-            if let Some(inner_bits) = member_bit_off(tb, sb, idx, inner, field, depth + 1) {
-                return Some(m_bit_off + inner_bits);
+            if let Some(b) = member_bit_off(tb, sb, idx, inner, field, depth + 1) {
+                return Some(m_bit_off + b);
             }
         }
     }
     None
 }
 
-/// Find ITER_IOVEC and ITER_UBUF values in `enum iter_type` from BTF.
 fn find_iter_enum_vals(tb: &[u8], sb: &[u8], idx: &[usize]) -> Option<(u8, u8)> {
     for &off in idx.iter().skip(1) {
         if off == usize::MAX || off + 12 > tb.len() { continue; }

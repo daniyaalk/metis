@@ -1,5 +1,5 @@
 use crate::assembler::KProbeAssembler;
-use crate::probes::kprobes::btf_layout::detect_iov_layout;
+use crate::probes::kprobes::btf_layout::detect_layouts;
 use crate::probes::ProbeEvent;
 use anyhow::Context;
 use aya::maps::RingBuf;
@@ -47,11 +47,17 @@ impl TcpSendMsgProbe {
         )?;
         rate_map.set(0, threshold, 0)?;
 
-        let layout = detect_iov_layout();
-        let mut layout_map = aya::maps::Array::<_, metis_common::IovLayout>::try_from(
+        let (iov_layout, sock_layout) = detect_layouts();
+
+        let mut iov_map = aya::maps::Array::<_, metis_common::IovLayout>::try_from(
             ebpf.map_mut("IOV_LAYOUT").context("IOV_LAYOUT map not found")?,
         )?;
-        layout_map.set(0, layout, 0)?;
+        iov_map.set(0, iov_layout, 0)?;
+
+        let mut sock_map = aya::maps::Array::<_, metis_common::SockLayout>::try_from(
+            ebpf.map_mut("SOCK_LAYOUT").context("SOCK_LAYOUT map not found")?,
+        )?;
+        sock_map.set(0, sock_layout, 0)?;
 
         let program: &mut KProbe = ebpf
             .program_mut("tcp_sendmsg")

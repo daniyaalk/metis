@@ -8,7 +8,7 @@ tcp_sendmsg_sample_rate = 100.0
 address = "127.0.0.1:8125"
 
 [modules.tcp]
-enabled = true
+#enabled = true
 # ports = [80, 443]  # omit to capture all ports
 
 [modules.mysql]

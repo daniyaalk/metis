@@ -89,12 +89,11 @@ impl TelegrafMetricsPusher {
         self.send(line);
     }
 
-    pub fn push_mysql_query_latency(&self, dest_ip: u32, port: u16, db: &str, query: &str, latency_ms: f64) {
-        // dest_ip is __be32 (network byte order); to_be_bytes() recovers the octets directly.
-        let ip_tag = if dest_ip != 0 {
-            format!(",db_ip={}", std::net::Ipv4Addr::from(dest_ip.to_be_bytes()))
-        } else {
-            String::new()
+    pub fn push_mysql_query_latency(&self, dest_ip: [u8; 16], ip_family: u8, port: u16, db: &str, query: &str, latency_ms: f64) {
+        let ip_tag = match ip_family {
+            4 => format!(",db_ip={}", std::net::Ipv4Addr::new(dest_ip[0], dest_ip[1], dest_ip[2], dest_ip[3])),
+            6 => format!(",db_ip={}", std::net::Ipv6Addr::from(dest_ip)),
+            _ => String::new(),
         };
         let db_tag = if db.is_empty() {
             String::new()

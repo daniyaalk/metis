@@ -16,8 +16,8 @@ pub struct MysqlModule {
     ports: Vec<u16>,
     // socket_ptr → current database (set by COM_INIT_DB); LRU-bounded to MAX_CONNECTIONS
     connections: LruCache<u64, String>,
-    // socket_ptr → (dest_ip, dest_port, send_timestamp_ns, query, db_at_send, inserted_at)
-    pending: HashMap<u64, (u32, u16, u64, String, String, Instant)>,
+    // socket_ptr → (dest_ip, ip_family, dest_port, send_timestamp_ns, query, db_at_send, inserted_at)
+    pending: HashMap<u64, ([u8; 16], u8, u16, u64, String, String, Instant)>,
     // insertion-ordered expiry queue; drained from the front on each insert
     expiry: VecDeque<(Instant, u64)>,
 }
@@ -52,7 +52,7 @@ impl Module for MysqlModule {
 
     fn on_event(&mut self, event: &ProbeEvent) {
         match event {
-            ProbeEvent::TcpSendMsg { dest_ip, dest_port, socket_ptr, timestamp_ns, payload } => {
+            ProbeEvent::TcpSendMsg { dest_ip, ip_family, dest_port, socket_ptr, timestamp_ns, payload } => {
                 if payload.get(3) != Some(&0x00) { return; }
 
                 match payload.get(4) {
@@ -69,29 +69,29 @@ impl Module for MysqlModule {
                         while let Some((ts, _ptr)) = self.expiry.front() {
                             if now.duration_since(*ts) < PENDING_TTL { break; }
                             let (ts, ptr) = self.expiry.pop_front().unwrap();
-                            if self.pending.get(&ptr).map_or(false, |e| e.5 == ts) {
+                            if self.pending.get(&ptr).map_or(false, |e| e.6 == ts) {
                                 self.pending.remove(&ptr);
                             }
                         }
 
                         let query = String::from_utf8_lossy(&payload[5..]).into_owned();
                         let db = self.connections.get(socket_ptr).cloned().unwrap_or_default();
-                        self.pending.insert(*socket_ptr, (*dest_ip, *dest_port, *timestamp_ns, query, db, now));
+                        self.pending.insert(*socket_ptr, (*dest_ip, *ip_family, *dest_port, *timestamp_ns, query, db, now));
                         self.expiry.push_back((now, *socket_ptr));
                     }
                     _ => {}
                 }
             }
             ProbeEvent::SockDefReadable { socket_ptr, timestamp_ns } => {
-                if let Some((dest_ip, dest_port, send_ns, query, db, _)) = self.pending.remove(socket_ptr) {
+                if let Some((dest_ip, ip_family, dest_port, send_ns, query, db, _)) = self.pending.remove(socket_ptr) {
                     if !query.is_empty() {
                         let latency_ms = timestamp_ns.saturating_sub(send_ns) as f64 / 1_000_000.0;
                         let normalized = normalize_query(&query);
                         log::info!(
                             "[mysql] ip={} port={} db={:?} latency={:.3}ms query={:?}",
-                            fmt_ip(dest_ip), dest_port, db, latency_ms, normalized,
+                            fmt_ip(dest_ip, ip_family), dest_port, db, latency_ms, normalized,
                         );
-                        self.sink.push_mysql_query_latency(dest_ip, dest_port, &db, &normalized, latency_ms);
+                        self.sink.push_mysql_query_latency(dest_ip, ip_family, dest_port, &db, &normalized, latency_ms);
                     }
                 }
             }
@@ -100,9 +100,12 @@ impl Module for MysqlModule {
     }
 }
 
-/// Format a raw `__be32` (network byte order) address as dotted-decimal.
-fn fmt_ip(raw: u32) -> std::net::Ipv4Addr {
-    std::net::Ipv4Addr::from(raw.to_be_bytes())
+fn fmt_ip(ip: [u8; 16], family: u8) -> std::net::IpAddr {
+    match family {
+        4 => std::net::IpAddr::V4(std::net::Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3])),
+        6 => std::net::IpAddr::V6(std::net::Ipv6Addr::from(ip)),
+        _ => std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+    }
 }
 
 /// Replaces string literals and numeric literals with `?`.
