@@ -119,11 +119,16 @@ pub fn tcp_sendmsg(ctx: ProbeContext) -> Result<u32, u32> {
 
     let read_len = count.min(MAX_PAYLOAD);
 
+    // skc_daddr (__be32) is the first field of struct sock_common at byte offset 0.
+    let dest_ip: u32 =
+        unsafe { bpf_probe_read_kernel(sock as *const u32) }.unwrap_or(0);
+
     let read_ok: bool;
     let data_addr = data_ptr as u64;
     unsafe {
         (*scratch).socket_ptr = sock as u64;
         (*scratch).timestamp_ns = bpf_ktime_get_ns();
+        (*scratch).dest_ip = dest_ip;
         (*scratch).dest_port = port;
         (*scratch).complete = true;
         read_ok = if data_addr >= KERNEL_ADDR_THRESHOLD {

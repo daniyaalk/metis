@@ -3,6 +3,7 @@ use metis_common::KProbeChunk;
 use std::collections::HashMap;
 
 struct AssemblyBuffer {
+    dest_ip: u32,
     dest_port: u16,
     socket_ptr: u64,
     timestamp_ns: u64,
@@ -26,6 +27,7 @@ impl KProbeAssembler {
             .sessions
             .entry(chunk.socket_ptr)
             .or_insert_with(|| AssemblyBuffer {
+                dest_ip: chunk.dest_ip,
                 dest_port: chunk.dest_port,
                 socket_ptr: chunk.socket_ptr,
                 timestamp_ns: chunk.timestamp_ns,
@@ -40,6 +42,7 @@ impl KProbeAssembler {
         if chunk.complete {
             let buf = self.sessions.remove(&chunk.socket_ptr)?;
             Some(ProbeEvent::TcpSendMsg {
+                dest_ip: buf.dest_ip,
                 dest_port: buf.dest_port,
                 socket_ptr: buf.socket_ptr,
                 timestamp_ns: buf.timestamp_ns,

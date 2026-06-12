@@ -50,6 +50,8 @@ pub struct KProbeChunk {
     pub socket_ptr: u64,
     /// Kernel timestamp (bpf_ktime_get_ns) at the moment of the send.
     pub timestamp_ns: u64,
+    /// Destination IPv4 address (skc_daddr, network byte order). Zero for IPv6.
+    pub dest_ip: u32,
     /// Destination port — present on every chunk so routing can start early.
     pub dest_port: u16,
     /// True when this is the last (or only) chunk for this session.
