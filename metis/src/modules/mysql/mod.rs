@@ -1,17 +1,23 @@
 use crate::modules::Module;
 use crate::probes::{ProbeEvent, ProbeRequirement};
 use crate::sink::telegraf::TelegrafMetricsPusher;
+use lru::LruCache;
 use std::collections::{HashMap, VecDeque};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+const MAX_CONNECTIONS: usize = 4096;
 
 const PENDING_TTL: Duration = Duration::from_secs(30);
 
 pub struct MysqlModule {
     sink: Arc<TelegrafMetricsPusher>,
     ports: Vec<u16>,
-    // socket_ptr → (dest_port, send_timestamp_ns, query, inserted_at)
-    pending: HashMap<u64, (u16, u64, String, Instant)>,
+    // socket_ptr → current database (set by COM_INIT_DB); LRU-bounded to MAX_CONNECTIONS
+    connections: LruCache<u64, String>,
+    // socket_ptr → (dest_port, send_timestamp_ns, query, db_at_send, inserted_at)
+    pending: HashMap<u64, (u16, u64, String, String, Instant)>,
     // insertion-ordered expiry queue; drained from the front on each insert
     expiry: VecDeque<(Instant, u64)>,
 }
@@ -21,6 +27,7 @@ impl MysqlModule {
         Self {
             sink,
             ports,
+            connections: LruCache::new(NonZeroUsize::new(MAX_CONNECTIONS).unwrap()),
             pending: HashMap::new(),
             expiry: VecDeque::new(),
         }
@@ -46,38 +53,45 @@ impl Module for MysqlModule {
     fn on_event(&mut self, event: &ProbeEvent) {
         match event {
             ProbeEvent::TcpSendMsg { dest_port, socket_ptr, timestamp_ns, payload } => {
-                if payload.get(3) != Some(&0x00) || payload.get(4) != Some(&0x03) {
-                    return;
-                }
+                if payload.get(3) != Some(&0x00) { return; }
 
-                // Drain expired entries from the front of the expiry queue.
-                let now = Instant::now();
-                while let Some((ts, _ptr)) = self.expiry.front() {
-                    if now.duration_since(*ts) < PENDING_TTL {
-                        break;
+                match payload.get(4) {
+                    Some(&0x02) => {
+                        // COM_INIT_DB — payload[5..] is the database name
+                        let db = String::from_utf8_lossy(&payload[5..]).into_owned();
+                        self.connections.put(*socket_ptr, db);
                     }
-                    let (ts, ptr) = self.expiry.pop_front().unwrap();
-                    // Guard against socket ptr reuse: only evict if the stored
-                    // Instant matches the one we're expiring.
-                    if self.pending.get(&ptr).map_or(false, |e| e.3 == ts) {
-                        self.pending.remove(&ptr);
-                    }
-                }
+                    Some(&0x03) => {
+                        // COM_QUERY — capture the query with the current db for this connection
+                        let now = Instant::now();
 
-                let query = String::from_utf8_lossy(&payload[5..]).into_owned();
-                self.pending.insert(*socket_ptr, (*dest_port, *timestamp_ns, query, now));
-                self.expiry.push_back((now, *socket_ptr));
+                        // Drain expired entries from the front of the expiry queue.
+                        while let Some((ts, _ptr)) = self.expiry.front() {
+                            if now.duration_since(*ts) < PENDING_TTL { break; }
+                            let (ts, ptr) = self.expiry.pop_front().unwrap();
+                            if self.pending.get(&ptr).map_or(false, |e| e.4 == ts) {
+                                self.pending.remove(&ptr);
+                            }
+                        }
+
+                        let query = String::from_utf8_lossy(&payload[5..]).into_owned();
+                        let db = self.connections.get(socket_ptr).cloned().unwrap_or_default();
+                        self.pending.insert(*socket_ptr, (*dest_port, *timestamp_ns, query, db, now));
+                        self.expiry.push_back((now, *socket_ptr));
+                    }
+                    _ => {}
+                }
             }
             ProbeEvent::SockDefReadable { socket_ptr, timestamp_ns } => {
-                if let Some((dest_port, send_ns, query, _)) = self.pending.remove(socket_ptr) {
+                if let Some((dest_port, send_ns, query, db, _)) = self.pending.remove(socket_ptr) {
                     if !query.is_empty() {
                         let latency_ms = timestamp_ns.saturating_sub(send_ns) as f64 / 1_000_000.0;
                         let normalized = normalize_query(&query);
                         log::info!(
-                            "[mysql] port={} latency={:.3}ms query={:?}",
-                            dest_port, latency_ms, normalized,
+                            "[mysql] port={} db={:?} latency={:.3}ms query={:?}",
+                            dest_port, db, latency_ms, normalized,
                         );
-                        self.sink.push_mysql_query_latency(dest_port, &normalized, latency_ms);
+                        self.sink.push_mysql_query_latency(dest_port, &db, &normalized, latency_ms);
                     }
                 }
             }

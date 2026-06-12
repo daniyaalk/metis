@@ -89,10 +89,11 @@ impl TelegrafMetricsPusher {
         self.send(line);
     }
 
-    pub fn push_mysql_query_latency(&self, port: u16, query: &str, latency_ms: f64) {
+    pub fn push_mysql_query_latency(&self, port: u16, db: &str, query: &str, latency_ms: f64) {
         let line = format!(
-            "mysql_query_latency,port={},query={} latency_ms={}",
+            "mysql_query_latency,port={},db={},query={} latency_ms={}",
             port,
+            escape_tag(db),
             escape_tag(query),
             latency_ms,
         );
