@@ -6,6 +6,14 @@ fn escape_tag(s: &str) -> String {
         .replace('=', "\\=")
         .replace(' ', "\\ ")
 }
+
+fn domain_tag(domain: Option<&str>) -> String {
+    match domain {
+        Some(d) if !d.is_empty() => format!(",domain={}", escape_tag(d)),
+        _ => String::new(),
+    }
+}
+
 use crate::probes::tracepoints::tcp_receive_reset::ReadableTcpReceiveResetEvent;
 use crate::probes::tracepoints::tcp_retransmit_skb::ReadableTCPRetransmitSkbEvent;
 use crate::probes::tracepoints::tcp_send_reset::ReadableTcpSendResetEvent;
@@ -32,14 +40,15 @@ impl TelegrafMetricsPusher {
         })
     }
 
-    pub fn push_tcp_probe(&self, e: &ReadableTCPProbeEvent) {
+    pub fn push_tcp_probe(&self, e: &ReadableTCPProbeEvent, domain: Option<&str>) {
         let line = format!(
-            "bpf_tcp_probe,src_ip={},dest_ip={},family={},\
+            "bpf_tcp_probe,src_ip={},dest_ip={}{},family={},\
              pid={},tgid={},src_port={},dest_port={} \
              data_len={}u,snd_cwnd={}u,ssthresh={}u,snd_wnd={}u,\
              srtt_us={}u,rcv_wnd={}u,value=1u",
             e.src_addr,
             e.dest_addr,
+            domain_tag(domain),
             e.family,
             e.pid,
             e.tgid,
@@ -55,12 +64,13 @@ impl TelegrafMetricsPusher {
         self.send(line);
     }
 
-    pub fn push_tcp_retransmit_skb(&self, e: &ReadableTCPRetransmitSkbEvent) {
+    pub fn push_tcp_retransmit_skb(&self, e: &ReadableTCPRetransmitSkbEvent, domain: Option<&str>) {
         let line = format!(
-            "bpf_tcp_retransmit_skb,src_ip={},dest_ip={},family={},\
+            "bpf_tcp_retransmit_skb,src_ip={},dest_ip={}{},family={},\
              state={},pid={},src_port={},dest_port={},err={} value=1u",
             e.source_ip,
             e.destination_ip,
+            domain_tag(domain),
             e.family,
             e.state,
             e.pid,
@@ -71,25 +81,49 @@ impl TelegrafMetricsPusher {
         self.send(line);
     }
 
-    pub fn push_tcp_send_reset(&self, e: &ReadableTcpSendResetEvent) {
+    pub fn push_tcp_send_reset(&self, e: &ReadableTcpSendResetEvent, domain: Option<&str>) {
         let line = format!(
-            "bpf_tcp_send_reset,src_ip={},dest_ip={},state={},reason={},\
+            "bpf_tcp_send_reset,src_ip={},dest_ip={}{},state={},reason={},\
              pid={},src_port={},dst_port={} value=1u",
-            e.src_ip, e.dst_ip, e.state, e.reason, e.pid, e.src_port, e.dst_port,
+            e.src_ip,
+            e.dst_ip,
+            domain_tag(domain),
+            e.state,
+            e.reason,
+            e.pid,
+            e.src_port,
+            e.dst_port,
         );
         self.send(line);
     }
 
-    pub fn push_tcp_receive_reset(&self, e: &ReadableTcpReceiveResetEvent) {
+    pub fn push_tcp_receive_reset(&self, e: &ReadableTcpReceiveResetEvent, domain: Option<&str>) {
         let line = format!(
-            "bpf_tcp_receive_reset,src_ip={},dest_ip={},family={},\
+            "bpf_tcp_receive_reset,src_ip={},dest_ip={}{},family={},\
              pid={},src_port={},dest_port={},skaddr={},sock_cookie={} value=1u",
-            e.src_ip, e.dst_ip, e.family, e.pid, e.sport, e.dport, e.skaddr, e.sock_cookie,
+            e.src_ip,
+            e.dst_ip,
+            domain_tag(domain),
+            e.family,
+            e.pid,
+            e.sport,
+            e.dport,
+            e.skaddr,
+            e.sock_cookie,
         );
         self.send(line);
     }
 
-    pub fn push_mysql_query_latency(&self, dest_ip: [u8; 16], ip_family: u8, port: u16, db: &str, query: &str, latency_ms: f64) {
+    pub fn push_mysql_query_latency(
+        &self,
+        dest_ip: [u8; 16],
+        ip_family: u8,
+        port: u16,
+        db: &str,
+        query: &str,
+        latency_ms: f64,
+        domain: Option<&str>,
+    ) {
         let ip_tag = match ip_family {
             4 => format!(",db_ip={}", std::net::Ipv4Addr::new(dest_ip[0], dest_ip[1], dest_ip[2], dest_ip[3])),
             6 => {
@@ -107,12 +141,31 @@ impl TelegrafMetricsPusher {
             format!(",db={}", escape_tag(db))
         };
         let line = format!(
-            "mysql_query_latency,port={}{}{},query={} latency_ms={}",
+            "mysql_query_latency,port={}{}{}{},query={} latency_ms={}",
             port,
             ip_tag,
             db_tag,
+            domain_tag(domain),
             escape_tag(query),
             latency_ms,
+        );
+        self.send(line);
+    }
+
+    pub fn push_dns_query(&self, domain: &str, rcode: u8) {
+        let rcode_name = match rcode {
+            0 => "NOERROR",
+            1 => "FORMERR",
+            2 => "SERVFAIL",
+            3 => "NXDOMAIN",
+            4 => "NOTIMP",
+            5 => "REFUSED",
+            _ => "UNKNOWN",
+        };
+        let line = format!(
+            "dns_query,domain={},rcode={} value=1u",
+            escape_tag(domain),
+            rcode_name,
         );
         self.send(line);
     }

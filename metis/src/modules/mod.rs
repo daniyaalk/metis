@@ -1,5 +1,6 @@
 use crate::probes::{ProbeEvent, ProbeRequirement};
 
+pub mod dns;
 pub mod http;
 pub mod mysql;
 pub mod tcp;

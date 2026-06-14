@@ -1,4 +1,4 @@
-use metis_common::{IovLayout, SockLayout};
+use metis_common::{IovLayout, SockLayout, UdpLayout};
 
 /// Parse BTF once and return both layouts. Falls back to hardcoded defaults on failure.
 pub fn detect_layouts() -> (IovLayout, SockLayout) {
@@ -36,6 +36,47 @@ pub fn detect_layouts() -> (IovLayout, SockLayout) {
     log::info!("sock_common layout: skc_v6_daddr@{}", sock.v6_daddr_off);
 
     (iov, sock)
+}
+
+/// Detect `sk_receive_queue` and `sk_buff.data` offsets from BTF.
+/// Falls back to conservative guesses when BTF is unavailable.
+pub fn detect_udp_layout() -> UdpLayout {
+    // Fallback values are rough guesses for x86_64 Linux 6.x; BTF is preferred.
+    let default = UdpLayout {
+        sk_receive_queue_off: 320,
+        skb_data_off: 208,
+    };
+
+    let Some((tb, sb, idx)) = load_btf() else {
+        log::warn!("BTF unavailable; using hardcoded UDP layout defaults");
+        return default;
+    };
+
+    detect_udp(&tb, &sb, &idx).unwrap_or_else(|| {
+        log::warn!("BTF UDP layout detection failed; using defaults");
+        default
+    })
+}
+
+fn detect_udp(tb: &[u8], sb: &[u8], idx: &[usize]) -> Option<UdpLayout> {
+    let sock_off   = find_struct(tb, sb, idx, "sock")?;
+    let sk_buff_off = find_struct(tb, sb, idx, "sk_buff")?;
+
+    let sq_bits   = member_bit_off(tb, sb, idx, sock_off,    "sk_receive_queue", 0)?;
+    let data_bits = member_bit_off(tb, sb, idx, sk_buff_off, "data",             0)?;
+
+    let layout = UdpLayout {
+        sk_receive_queue_off: sq_bits   / 8,
+        skb_data_off:         data_bits / 8,
+    };
+
+    log::info!(
+        "UDP layout: sk_receive_queue@{} sk_buff.data@{}",
+        layout.sk_receive_queue_off,
+        layout.skb_data_off,
+    );
+
+    Some(layout)
 }
 
 fn load_btf() -> Option<(Vec<u8>, Vec<u8>, Vec<usize>)> {

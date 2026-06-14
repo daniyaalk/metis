@@ -99,6 +99,24 @@ pub fn tcp_receive_reset(ctx: TracePointContext) -> u32 {
     }
 }
 
+#[kprobe]
+pub fn udp_recvmsg(ctx: ProbeContext) -> u32 {
+    match kprobes::udp_recvmsg::handle(ctx) {
+        Ok(_) => 0,
+        Err(_) => 0,
+    }
+}
+
+/// Hook for IPv6 UDP sockets (including dual-stack ::ffff: mapped IPv4).
+/// Shares all maps with udp_recvmsg so a single ring buffer reader covers both.
+#[kprobe]
+pub fn udpv6_recvmsg(ctx: ProbeContext) -> u32 {
+    match kprobes::udp_recvmsg::handle(ctx) {
+        Ok(_) => 0,
+        Err(_) => 0,
+    }
+}
+
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {

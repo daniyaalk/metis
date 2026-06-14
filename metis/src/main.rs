@@ -1,5 +1,6 @@
 pub mod assembler;
 pub mod config;
+pub mod dns_cache;
 pub mod modules;
 pub mod orchestrator;
 pub mod probes;
@@ -7,7 +8,9 @@ pub mod router;
 pub mod sink;
 
 use crate::config::Config;
+use crate::dns_cache::new_shared;
 use crate::modules::Module;
+use crate::modules::dns::DnsModule;
 use crate::modules::http::HttpModule;
 use crate::modules::mysql::MysqlModule;
 use crate::modules::tcp::TcpModule;
@@ -70,13 +73,26 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let sink = Arc::new(TelegrafMetricsPusher::new(&cfg.telegraf.address).await?);
+    let dns_cache = new_shared();
 
     let mut modules: Vec<Arc<Mutex<dyn Module>>> = Vec::new();
+
+    if cfg.modules.dns.enabled {
+        modules.push(Arc::new(Mutex::new(DnsModule::new(dns_cache.clone(), sink.clone()))));
+    }
     if cfg.modules.tcp.enabled {
-        modules.push(Arc::new(Mutex::new(TcpModule::new(sink.clone(), cfg.modules.tcp.ports))));
+        modules.push(Arc::new(Mutex::new(TcpModule::new(
+            sink.clone(),
+            cfg.modules.tcp.ports,
+            dns_cache.clone(),
+        ))));
     }
     if cfg.modules.mysql.enabled {
-        modules.push(Arc::new(Mutex::new(MysqlModule::new(sink.clone(), cfg.modules.mysql.ports))));
+        modules.push(Arc::new(Mutex::new(MysqlModule::new(
+            sink.clone(),
+            cfg.modules.mysql.ports,
+            dns_cache.clone(),
+        ))));
     }
     if cfg.modules.http.enabled {
         modules.push(Arc::new(Mutex::new(HttpModule::new(cfg.modules.http.ports))));

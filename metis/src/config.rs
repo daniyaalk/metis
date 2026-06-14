@@ -39,6 +39,19 @@ pub struct ModulesConfig {
     pub tcp: TcpConfig,
     pub mysql: MysqlConfig,
     pub http: HttpConfig,
+    pub dns: DnsConfig,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DnsConfig {
+    pub enabled: bool,
+}
+
+impl Default for DnsConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 #[derive(Debug, Deserialize)]

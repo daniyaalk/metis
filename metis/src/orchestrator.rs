@@ -1,6 +1,7 @@
 use crate::modules::Module;
 use crate::probes::kprobes::sock_def_readable::SockDefReadableProbe;
 use crate::probes::kprobes::tcp_sendmsg::TcpSendMsgProbe;
+use crate::probes::kprobes::udp_recvmsg::UdpRecvMsgProbe;
 use crate::probes::tracepoints::tcp_probe::TcpProbe;
 use crate::probes::tracepoints::tcp_receive_reset::TcpReceiveReset;
 use crate::probes::tracepoints::tcp_retransmit_skb::TcpRetransmitSkb;
@@ -58,6 +59,11 @@ impl Orchestrator {
             SockDefReadableProbe.attach(ebpf, move |e| rt.dispatch(&e))?;
         }
 
+        if let Some(cfg) = merged.udp_recv_msg {
+            let rt = rt.clone();
+            UdpRecvMsgProbe::new(cfg.to_bpf_ports()).attach(ebpf, move |e| rt.dispatch(&e))?;
+        }
+
         Ok(())
     }
 
@@ -91,6 +97,10 @@ impl Orchestrator {
                     ProbeRequirement::SockDefReadable { dest_ports } => {
                         cfg.sock_def_readable = true;
                         register_ports(&mut table, ProbeType::SockDefReadable, dest_ports, idx);
+                    }
+                    ProbeRequirement::UdpRecvMsg { src_ports } => {
+                        absorb(&mut cfg.udp_recv_msg, src_ports.clone());
+                        register_ports(&mut table, ProbeType::UdpRecvMsg, src_ports, idx);
                     }
                 }
             }
@@ -127,20 +137,17 @@ struct MergedConfigs {
     tcp_receive_reset: Option<PortConfig>,
     tcp_send_msg: Option<PortConfig>,
     sock_def_readable: bool,
+    udp_recv_msg: Option<PortConfig>,
 }
 
 /// Merges `incoming` (from one module's `ProbeRequirement`) into `existing`.
 /// `None` incoming means "all ports" (no kernel-side filter).
 fn absorb(existing: &mut Option<PortConfig>, incoming: Option<Vec<u16>>) {
     *existing = Some(match (existing.take(), incoming) {
-        // First module requesting this probe
         (None, None) => PortConfig::All,
         (None, Some(ports)) => PortConfig::Specific(ports),
-        // Already "all ports" — stays that way regardless
         (Some(PortConfig::All), _) => PortConfig::All,
-        // Existing specific set but new module wants all ports
         (Some(PortConfig::Specific(_)), None) => PortConfig::All,
-        // Merge two specific port sets
         (Some(PortConfig::Specific(mut existing_ports)), Some(new_ports)) => {
             existing_ports.extend(new_ports);
             existing_ports.sort_unstable();

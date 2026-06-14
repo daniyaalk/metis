@@ -51,6 +51,34 @@ pub struct SockLayout {
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for SockLayout {}
 
+/// Kernel field offsets for the UDP receive path, detected at startup from BTF.
+/// Stored in the `UDP_LAYOUT` BPF map.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct UdpLayout {
+    /// Byte offset of `sk_receive_queue` (struct sk_buff_head) within `struct sock`.
+    pub sk_receive_queue_off: u32,
+    /// Byte offset of `data` (unsigned char *) within `struct sk_buff`.
+    pub skb_data_off: u32,
+}
+
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for UdpLayout {}
+
+/// Emitted by the udp_recvmsg / udpv6_recvmsg kprobes for every inbound UDP
+/// packet whose source port is in the configured filter.
+/// `data[..len]` holds the UDP payload (UDP header already stripped).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct UdpPacketEvent {
+    /// Source port of the received packet (e.g. 53 for a DNS response).
+    pub src_port: u16,
+    /// Number of valid bytes in `data`.
+    pub len: u16,
+    pub _pad: [u8; 4],
+    pub data: [u8; 512],
+}
+
 /// Emitted by kprobes. Due to the 512-byte eBPF stack limit, large payloads
 /// are split across multiple chunks sharing the same `socket_ptr`. The final
 /// (or only) chunk carries `complete == true`. Userspace must concatenate all
