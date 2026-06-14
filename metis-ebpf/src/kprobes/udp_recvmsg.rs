@@ -125,22 +125,25 @@ pub fn handle(ctx: ProbeContext, family: u8) -> Result<u32, u32> {
     // skb->data already points to the DNS payload (UDP header was pulled off).
     let payload_ptr = data_ptr as *const u8;
 
-    // Read source IP from the IP header that sits in the skb headroom.
-    // For IPv4: IP header starts at data-28 (8-byte UDP + 20-byte IP), src at data-16 (IP offset 12).
-    // For IPv6: IPv6 header starts at data-48 (8-byte UDP + 40-byte IPv6), src at data-40 (IPv6 offset 8).
-    let mut src_ip = [0u8; 16];
+    // Read the destination IP from the IP header in the skb headroom.
+    // We capture dest rather than src so callers get the recipient of the packet —
+    // for DNS responses that is the host that issued the query (the querier).
+    // IP header sits at data - 8 (UDP) - IP header size:
+    //   IPv4: header starts at data-28, dst addr at IP offset 16 → data-12
+    //   IPv6: header starts at data-48, dst addr at IPv6 offset 24 → data-24
+    let mut dest_ip = [0u8; 16];
     if family == 4 {
         unsafe {
             let _ = bpf_probe_read_kernel_buf(
-                (data_ptr - 16) as *const u8,
-                &mut src_ip[..4],
+                (data_ptr - 12) as *const u8,
+                &mut dest_ip[..4],
             );
         }
     } else {
         unsafe {
             let _ = bpf_probe_read_kernel_buf(
-                (data_ptr - 40) as *const u8,
-                &mut src_ip,
+                (data_ptr - 24) as *const u8,
+                &mut dest_ip,
             );
         }
     }
@@ -150,7 +153,7 @@ pub fn handle(ctx: ProbeContext, family: u8) -> Result<u32, u32> {
         (*scratch).src_port = src_port;
         (*scratch).ip_family = family;
         (*scratch)._pad = [0; 3];
-        (*scratch).src_ip = src_ip;
+        (*scratch).dest_ip = dest_ip;
         read_ok = bpf_probe_read_kernel_buf(
             payload_ptr,
             &mut (&mut (*scratch).data)[..MAX_DNS_PAYLOAD],

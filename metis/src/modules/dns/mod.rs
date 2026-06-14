@@ -28,13 +28,15 @@ impl Module for DnsModule {
     }
 
     fn on_event(&mut self, event: &ProbeEvent) {
-        if let ProbeEvent::UdpRecvMsg { src_port, src_ip, payload } = event {
-            log::trace!("[dns] on_event: src_port={} src_ip={} payload_len={}", src_port, src_ip, payload.len());
+        // dest_ip in the probe event is the packet's destination — for DNS responses
+        // that is the host which issued the query, so we surface it as querier_ip.
+        if let ProbeEvent::UdpRecvMsg { src_port, dest_ip: querier_ip, payload } = event {
+            log::trace!("[dns] on_event: src_port={} querier_ip={} payload_len={}", src_port, querier_ip, payload.len());
             if let Ok(mut cache) = self.cache.lock() {
                 if let Some((queries, rcode)) = try_parse(payload, &mut cache) {
                     for q in &queries {
-                        log::debug!("[dns] query metric: domain={} rcode={} src_ip={}", q, rcode, src_ip);
-                        self.sink.push_dns_query(q, rcode, *src_ip);
+                        log::debug!("[dns] query metric: domain={} rcode={} querier_ip={}", q, rcode, querier_ip);
+                        self.sink.push_dns_query(q, rcode, *querier_ip);
                     }
                 }
             }

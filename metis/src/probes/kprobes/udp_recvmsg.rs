@@ -81,12 +81,12 @@ impl UdpRecvMsgProbe {
                         );
                         continue;
                     }
-                    let src_ip = match raw.ip_family {
+                    let dest_ip = match raw.ip_family {
                         4 => IpAddr::V4(Ipv4Addr::new(
-                            raw.src_ip[0], raw.src_ip[1], raw.src_ip[2], raw.src_ip[3],
+                            raw.dest_ip[0], raw.dest_ip[1], raw.dest_ip[2], raw.dest_ip[3],
                         )),
                         _ => {
-                            let v6 = Ipv6Addr::from(raw.src_ip);
+                            let v6 = Ipv6Addr::from(raw.dest_ip);
                             match v6.to_ipv4_mapped() {
                                 Some(v4) => IpAddr::V4(v4),
                                 None => IpAddr::V6(v6),
@@ -94,13 +94,13 @@ impl UdpRecvMsgProbe {
                         }
                     };
                     log::debug!(
-                        "[udp_recvmsg] ring-buf event: src_port={} src_ip={} payload_len={}",
-                        raw.src_port, src_ip, len
+                        "[udp_recvmsg] ring-buf event: src_port={} dest_ip={} payload_len={}",
+                        raw.src_port, dest_ip, len
                     );
                     let payload = raw.data[..len].to_vec();
                     on_event(ProbeEvent::UdpRecvMsg {
                         src_port: raw.src_port,
-                        src_ip,
+                        dest_ip,
                         payload,
                     });
                 }
