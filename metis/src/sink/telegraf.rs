@@ -152,7 +152,7 @@ impl TelegrafMetricsPusher {
         self.send(line);
     }
 
-    pub fn push_dns_query(&self, domain: &str, rcode: u8) {
+    pub fn push_dns_query(&self, domain: &str, rcode: u8, src_ip: std::net::IpAddr) {
         let rcode_name = match rcode {
             0 => "NOERROR",
             1 => "FORMERR",
@@ -163,9 +163,10 @@ impl TelegrafMetricsPusher {
             _ => "UNKNOWN",
         };
         let line = format!(
-            "dns_query,domain={},rcode={} value=1u",
+            "dns_query,domain={},rcode={},src_ip={} value=1u",
             escape_tag(domain),
             rcode_name,
+            src_ip,
         );
         self.send(line);
     }

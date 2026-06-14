@@ -28,13 +28,13 @@ impl Module for DnsModule {
     }
 
     fn on_event(&mut self, event: &ProbeEvent) {
-        if let ProbeEvent::UdpRecvMsg { src_port, payload } = event {
-            log::debug!("[dns] on_event: src_port={} payload_len={}", src_port, payload.len());
+        if let ProbeEvent::UdpRecvMsg { src_port, src_ip, payload } = event {
+            log::trace!("[dns] on_event: src_port={} src_ip={} payload_len={}", src_port, src_ip, payload.len());
             if let Ok(mut cache) = self.cache.lock() {
                 if let Some((queries, rcode)) = try_parse(payload, &mut cache) {
                     for q in &queries {
-                        log::debug!("[dns] query metric: domain={} rcode={}", q, rcode);
-                        self.sink.push_dns_query(q, rcode);
+                        log::debug!("[dns] query metric: domain={} rcode={} src_ip={}", q, rcode, src_ip);
+                        self.sink.push_dns_query(q, rcode, *src_ip);
                     }
                 }
             }
@@ -98,7 +98,7 @@ fn try_parse(msg: &[u8], cache: &mut DnsCache) -> Option<(Vec<String>, u8)> {
                     let ip = IpAddr::V4(Ipv4Addr::new(
                         msg[pos], msg[pos + 1], msg[pos + 2], msg[pos + 3],
                     ));
-                    log::info!("[dns] A {} → {}", ip, rec_name);
+                    log::debug!("[dns] A {} → {}", ip, rec_name);
                     cache.insert(ip, rec_name);
                 }
                 28 if rdlength == 16 => {
@@ -109,12 +109,12 @@ fn try_parse(msg: &[u8], cache: &mut DnsCache) -> Option<(Vec<String>, u8)> {
                         Some(v4) => IpAddr::V4(v4),
                         None => IpAddr::V6(v6),
                     };
-                    log::info!("[dns] AAAA {} → {}", ip, rec_name);
+                    log::debug!("[dns] AAAA {} → {}", ip, rec_name);
                     cache.insert(ip, rec_name);
                 }
                 5 => {
                     if let Some((cname_target, _)) = parse_name(msg, pos) {
-                        log::debug!("[dns] CNAME {} → {}", rec_name, cname_target);
+                        log::trace!("[dns] CNAME {} → {}", rec_name, cname_target);
                     }
                 }
                 _ => {}

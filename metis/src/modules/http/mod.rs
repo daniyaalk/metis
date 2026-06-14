@@ -25,7 +25,7 @@ impl Module for HttpModule {
     fn on_event(&mut self, event: &ProbeEvent) {
         if let ProbeEvent::TcpSendMsg { dest_port, payload, .. } = event {
             let text = String::from_utf8_lossy(payload);
-            log::info!(
+            log::debug!(
                 "[http] port={} len={} data={:?}",
                 dest_port,
                 payload.len(),

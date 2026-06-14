@@ -96,7 +96,7 @@ impl Module for MysqlModule {
                         let ip = fmt_ip(dest_ip, ip_family);
                         let domain = self.dns_cache.lock().ok()
                             .and_then(|mut c| c.lookup(&ip).map(str::to_string));
-                        log::info!(
+                        log::debug!(
                             "[mysql] ip={} port={} db={:?} latency={:.3}ms query={:?}",
                             ip, dest_port, db, latency_ms, normalized,
                         );

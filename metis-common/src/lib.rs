@@ -75,7 +75,11 @@ pub struct UdpPacketEvent {
     pub src_port: u16,
     /// Number of valid bytes in `data`.
     pub len: u16,
-    pub _pad: [u8; 4],
+    /// 4 = IPv4, 6 = IPv6.
+    pub ip_family: u8,
+    pub _pad: [u8; 3],
+    /// Source IP of the sender. IPv4 address in bytes [0..4]; IPv6 uses all 16.
+    pub src_ip: [u8; 16],
     pub data: [u8; 512],
 }
 

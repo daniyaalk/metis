@@ -5,6 +5,7 @@ use aya::maps::RingBuf;
 use aya::programs::KProbe;
 use aya::Ebpf;
 use metis_common::UdpPacketEvent;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use tokio::io::unix::AsyncFd;
 use tokio::io::Interest;
 
@@ -80,13 +81,26 @@ impl UdpRecvMsgProbe {
                         );
                         continue;
                     }
+                    let src_ip = match raw.ip_family {
+                        4 => IpAddr::V4(Ipv4Addr::new(
+                            raw.src_ip[0], raw.src_ip[1], raw.src_ip[2], raw.src_ip[3],
+                        )),
+                        _ => {
+                            let v6 = Ipv6Addr::from(raw.src_ip);
+                            match v6.to_ipv4_mapped() {
+                                Some(v4) => IpAddr::V4(v4),
+                                None => IpAddr::V6(v6),
+                            }
+                        }
+                    };
                     log::debug!(
-                        "[udp_recvmsg] ring-buf event: src_port={} payload_len={}",
-                        raw.src_port, len
+                        "[udp_recvmsg] ring-buf event: src_port={} src_ip={} payload_len={}",
+                        raw.src_port, src_ip, len
                     );
                     let payload = raw.data[..len].to_vec();
                     on_event(ProbeEvent::UdpRecvMsg {
                         src_port: raw.src_port,
+                        src_ip,
                         payload,
                     });
                 }

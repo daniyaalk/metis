@@ -2,7 +2,7 @@ use aya_ebpf::helpers::{bpf_probe_read_kernel, bpf_probe_read_kernel_buf};
 use aya_ebpf::macros::map;
 use aya_ebpf::maps::{Array, HashMap, PerCpuArray, RingBuf};
 use aya_ebpf::programs::ProbeContext;
-use aya_log_ebpf::{debug, info, warn};
+use aya_log_ebpf::{debug, info, trace, warn};
 use metis_common::{UdpLayout, UdpPacketEvent};
 
 const MAX_DNS_PAYLOAD: usize = 512;
@@ -22,8 +22,8 @@ static mut SCRATCH: PerCpuArray<UdpPacketEvent> = PerCpuArray::with_max_entries(
 #[map(name = "UDP_RECVMSG_RINGBUF")]
 pub static mut UDP_RECVMSG_RINGBUF: RingBuf = RingBuf::with_byte_size(256 * 1024, 0);
 
-/// Shared handler for udp_recvmsg and udpv6_recvmsg kprobes.
-pub fn handle(ctx: ProbeContext) -> Result<u32, u32> {
+/// Shared handler for udp_recvmsg (family=4) and udpv6_recvmsg (family=6) kprobes.
+pub fn handle(ctx: ProbeContext, family: u8) -> Result<u32, u32> {
     let sk: *const u8 = ctx.arg(0).ok_or(0u32)?;
 
     #[allow(static_mut_refs)]
@@ -73,7 +73,7 @@ pub fn handle(ctx: ProbeContext) -> Result<u32, u32> {
         }
     };
 
-    debug!(&ctx, "udp_recvmsg: skb={:x} data={:x}", skb_ptr, data_ptr);
+    trace!(&ctx, "udp_recvmsg: skb={:x} data={:x}", skb_ptr, data_ptr);
 
     if data_ptr == 0 {
         warn!(&ctx, "udp_recvmsg: skb->data is NULL");
@@ -97,7 +97,7 @@ pub fn handle(ctx: ProbeContext) -> Result<u32, u32> {
         unsafe { bpf_probe_read_kernel((udp_hdr_ptr + 2) as *const u16) }.unwrap_or(0);
     let dst_port = u16::from_be(dst_port_be);
 
-    debug!(
+    trace!(
         &ctx,
         "udp_recvmsg: src_port={} dst_port={}",
         src_port as u32,
@@ -107,11 +107,11 @@ pub fn handle(ctx: ProbeContext) -> Result<u32, u32> {
     // Apply port filter; key 0 = wildcard (all ports pass).
     #[allow(static_mut_refs)]
     if unsafe { PORTS.get(0).is_none() && PORTS.get(&src_port).is_none() } {
-        debug!(&ctx, "udp_recvmsg: src_port={} not in filter, skipping", src_port as u32);
+        trace!(&ctx, "udp_recvmsg: src_port={} not in filter, skipping", src_port as u32);
         return Ok(0);
     }
 
-    info!(
+    debug!(
         &ctx,
         "udp_recvmsg: matched src_port={} dst_port={} data={:x}",
         src_port as u32,
@@ -125,10 +125,32 @@ pub fn handle(ctx: ProbeContext) -> Result<u32, u32> {
     // skb->data already points to the DNS payload (UDP header was pulled off).
     let payload_ptr = data_ptr as *const u8;
 
+    // Read source IP from the IP header that sits in the skb headroom.
+    // For IPv4: IP header starts at data-28 (8-byte UDP + 20-byte IP), src at data-16 (IP offset 12).
+    // For IPv6: IPv6 header starts at data-48 (8-byte UDP + 40-byte IPv6), src at data-40 (IPv6 offset 8).
+    let mut src_ip = [0u8; 16];
+    if family == 4 {
+        unsafe {
+            let _ = bpf_probe_read_kernel_buf(
+                (data_ptr - 16) as *const u8,
+                &mut src_ip[..4],
+            );
+        }
+    } else {
+        unsafe {
+            let _ = bpf_probe_read_kernel_buf(
+                (data_ptr - 40) as *const u8,
+                &mut src_ip,
+            );
+        }
+    }
+
     let read_ok;
     unsafe {
         (*scratch).src_port = src_port;
-        (*scratch)._pad = [0; 4];
+        (*scratch).ip_family = family;
+        (*scratch)._pad = [0; 3];
+        (*scratch).src_ip = src_ip;
         read_ok = bpf_probe_read_kernel_buf(
             payload_ptr,
             &mut (&mut (*scratch).data)[..MAX_DNS_PAYLOAD],
@@ -153,7 +175,7 @@ pub fn handle(ctx: ProbeContext) -> Result<u32, u32> {
             let flags = (b2 << 8) | b3;
             let qdcnt = (b4 << 8) | b5;
             let ancnt = (b6 << 8) | b7;
-            info!(
+            debug!(
                 &ctx,
                 "udp_recvmsg: DNS txid={:x} flags={:x} qd={} an={}",
                 txid, flags, qdcnt, ancnt,

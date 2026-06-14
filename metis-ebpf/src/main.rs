@@ -101,7 +101,7 @@ pub fn tcp_receive_reset(ctx: TracePointContext) -> u32 {
 
 #[kprobe]
 pub fn udp_recvmsg(ctx: ProbeContext) -> u32 {
-    match kprobes::udp_recvmsg::handle(ctx) {
+    match kprobes::udp_recvmsg::handle(ctx, 4) {
         Ok(_) => 0,
         Err(_) => 0,
     }
@@ -111,7 +111,7 @@ pub fn udp_recvmsg(ctx: ProbeContext) -> u32 {
 /// Shares all maps with udp_recvmsg so a single ring buffer reader covers both.
 #[kprobe]
 pub fn udpv6_recvmsg(ctx: ProbeContext) -> u32 {
-    match kprobes::udp_recvmsg::handle(ctx) {
+    match kprobes::udp_recvmsg::handle(ctx, 6) {
         Ok(_) => 0,
         Err(_) => 0,
     }
