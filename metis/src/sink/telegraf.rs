@@ -184,7 +184,7 @@ impl TelegrafMetricsPusher {
                 .map(|ip| ip.to_string())
                 .collect::<Vec<_>>()
                 .join("&");
-            line.push_str(&format!(",resolved_ip={}", joined));
+            line.push_str(&format!(",resolved_ips={}", joined));
         }
         line.push_str(" value=1u");
         self.send(line);
