@@ -33,10 +33,10 @@ impl Module for DnsModule {
         if let ProbeEvent::UdpRecvMsg { src_port, dest_ip: querier_ip, payload } = event {
             log::trace!("[dns] on_event: src_port={} querier_ip={} payload_len={}", src_port, querier_ip, payload.len());
             if let Ok(mut cache) = self.cache.lock() {
-                if let Some((queries, rcode)) = try_parse(payload, &mut cache) {
+                if let Some((queries, rcode, resolved_ips)) = try_parse(payload, &mut cache) {
                     for q in &queries {
-                        log::debug!("[dns] query metric: domain={} rcode={} querier_ip={}", q, rcode, querier_ip);
-                        self.sink.push_dns_query(q, rcode, *querier_ip);
+                        log::debug!("[dns] query metric: domain={} rcode={} querier_ip={} resolved={:?}", q, rcode, querier_ip, resolved_ips);
+                        self.sink.push_dns_query(q, rcode, *querier_ip, &resolved_ips);
                     }
                 }
             }
@@ -45,9 +45,9 @@ impl Module for DnsModule {
 }
 
 /// Parses a DNS response message. Updates the cache for A/AAAA records on RCODE=0.
-/// Returns `(queries, rcode)` where `queries` are the question QNAMEs (for metrics).
+/// Returns `(queries, rcode, resolved_ips)` — QNAMEs, RCODE, and every A/AAAA address found.
 /// Returns None for DNS queries (QR=0) or malformed messages.
-fn try_parse(msg: &[u8], cache: &mut DnsCache) -> Option<(Vec<String>, u8)> {
+fn try_parse(msg: &[u8], cache: &mut DnsCache) -> Option<(Vec<String>, u8, Vec<IpAddr>)> {
     if msg.len() < 12 {
         return None;
     }
@@ -63,6 +63,7 @@ fn try_parse(msg: &[u8], cache: &mut DnsCache) -> Option<(Vec<String>, u8)> {
 
     let mut pos = 12;
     let mut queries = Vec::new();
+    let mut resolved_ips: Vec<IpAddr> = Vec::new();
 
     // Parse question section and collect all QNAMEs for metrics.
     for _ in 0..qdcount {
@@ -102,6 +103,7 @@ fn try_parse(msg: &[u8], cache: &mut DnsCache) -> Option<(Vec<String>, u8)> {
                     ));
                     log::debug!("[dns] A {} → {}", ip, rec_name);
                     cache.insert(ip, rec_name);
+                    resolved_ips.push(ip);
                 }
                 28 if rdlength == 16 => {
                     let mut bytes = [0u8; 16];
@@ -113,6 +115,7 @@ fn try_parse(msg: &[u8], cache: &mut DnsCache) -> Option<(Vec<String>, u8)> {
                     };
                     log::debug!("[dns] AAAA {} → {}", ip, rec_name);
                     cache.insert(ip, rec_name);
+                    resolved_ips.push(ip);
                 }
                 5 => {
                     if let Some((cname_target, _)) = parse_name(msg, pos) {
@@ -126,7 +129,11 @@ fn try_parse(msg: &[u8], cache: &mut DnsCache) -> Option<(Vec<String>, u8)> {
         }
     }
 
-    Some((queries, rcode))
+    // Sort so that round-robin responses returning the same IPs in different
+    // orders always produce the same string when joined for the metric field.
+    resolved_ips.sort_unstable();
+    resolved_ips.dedup();
+    Some((queries, rcode, resolved_ips))
 }
 
 /// Parses a DNS name (with pointer compression) starting at `pos` in `msg`.
@@ -304,9 +311,10 @@ mod tests {
         let result = try_parse(&msg, &mut cache);
         // Should still return the query name and rcode for metrics
         assert!(result.is_some());
-        let (queries, rcode) = result.unwrap();
+        let (queries, rcode, resolved_ips) = result.unwrap();
         assert_eq!(rcode, 3);
         assert_eq!(queries, ["example.com"]);
+        assert!(resolved_ips.is_empty());
         // But cache must NOT be updated
         assert!(cache.lookup(&IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4))).is_none());
     }
@@ -318,9 +326,10 @@ mod tests {
         let mut cache = DnsCache::new();
         let result = try_parse(&msg, &mut cache);
         assert!(result.is_some());
-        let (queries, rcode) = result.unwrap();
+        let (queries, rcode, resolved_ips) = result.unwrap();
         assert_eq!(rcode, 0);
         assert_eq!(queries, ["www.example.com"]);
+        assert_eq!(resolved_ips, [IpAddr::V4(ip)]);
         // The A record's NAME is "cdn.example.net" (the CNAME target), not the QNAME
         assert_eq!(
             cache.lookup(&IpAddr::V4(ip)).unwrap(),

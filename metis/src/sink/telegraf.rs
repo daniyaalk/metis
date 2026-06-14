@@ -152,7 +152,13 @@ impl TelegrafMetricsPusher {
         self.send(line);
     }
 
-    pub fn push_dns_query(&self, domain: &str, rcode: u8, querier_ip: std::net::IpAddr) {
+    pub fn push_dns_query(
+        &self,
+        domain: &str,
+        rcode: u8,
+        querier_ip: std::net::IpAddr,
+        resolved_ips: &[std::net::IpAddr],
+    ) {
         let rcode_name = match rcode {
             0 => "NOERROR",
             1 => "FORMERR",
@@ -162,11 +168,24 @@ impl TelegrafMetricsPusher {
             5 => "REFUSED",
             _ => "UNKNOWN",
         };
+        // resolved_ips is a field (not a tag) so it does not contribute to series
+        // cardinality. The caller must pre-sort the slice so that round-robin
+        // responses with the same IPs in different orders produce the same string.
+        let mut fields = String::from("value=1u");
+        if !resolved_ips.is_empty() {
+            let joined = resolved_ips
+                .iter()
+                .map(|ip| ip.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            fields.push_str(&format!(",resolved_ips=\"{}\"", joined));
+        }
         let line = format!(
-            "dns_query,domain={},rcode={},querier_ip={} value=1u",
+            "dns_query,domain={},rcode={},querier_ip={} {}",
             escape_tag(domain),
             rcode_name,
             querier_ip,
+            fields,
         );
         self.send(line);
     }
