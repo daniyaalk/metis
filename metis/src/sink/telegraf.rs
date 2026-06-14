@@ -168,25 +168,25 @@ impl TelegrafMetricsPusher {
             5 => "REFUSED",
             _ => "UNKNOWN",
         };
-        // resolved_ips is a field (not a tag) so it does not contribute to series
-        // cardinality. The caller must pre-sort the slice so that round-robin
-        // responses with the same IPs in different orders produce the same string.
-        let mut fields = String::from("value=1u");
+        // All resolved IPs joined with '&' as a single tag so one line is emitted
+        // per DNS response. Caller must pre-sort and dedup the slice so that
+        // round-robin responses returning the same IPs in different orders always
+        // produce the same tag value and don't create duplicate series.
+        let mut line = format!(
+            "dns_query,domain={},rcode={},querier_ip={}",
+            escape_tag(domain),
+            rcode_name,
+            querier_ip,
+        );
         if !resolved_ips.is_empty() {
             let joined = resolved_ips
                 .iter()
                 .map(|ip| ip.to_string())
                 .collect::<Vec<_>>()
-                .join(",");
-            fields.push_str(&format!(",resolved_ips=\"{}\"", joined));
+                .join("&");
+            line.push_str(&format!(",resolved_ip={}", joined));
         }
-        let line = format!(
-            "dns_query,domain={},rcode={},querier_ip={} {}",
-            escape_tag(domain),
-            rcode_name,
-            querier_ip,
-            fields,
-        );
+        line.push_str(" value=1u");
         self.send(line);
     }
 
