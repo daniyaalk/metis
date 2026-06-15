@@ -4,8 +4,9 @@
 tcp_sendmsg_sample_rate = 100.0
 
 [telegraf]
-# UDP address of the Telegraf InfluxDB line-protocol listener.
+# UDP address of the Telegraf StatsD listener.
 address = "127.0.0.1:8125"
+protocol = "statsd"
 
 [modules.tcp]
 enabled = true

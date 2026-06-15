@@ -72,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let sink = Arc::new(TelegrafMetricsPusher::new(&cfg.telegraf.address).await?);
+    let sink = Arc::new(TelegrafMetricsPusher::new(&cfg.telegraf.address, cfg.telegraf.protocol).await?);
     let dns_cache = new_shared();
 
     let mut modules: Vec<Arc<Mutex<dyn Module>>> = Vec::new();

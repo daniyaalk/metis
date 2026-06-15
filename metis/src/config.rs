@@ -20,16 +20,34 @@ impl Default for Config {
     }
 }
 
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MetricProtocol {
+    /// InfluxDB line protocol (Telegraf `inputs.socket_listener` or `inputs.influxdb_listener`).
+    Influx,
+    /// DogStatsD-extended StatsD (Telegraf `inputs.statsd` with `datadog_extensions = true`).
+    Statsd,
+}
+
+impl Default for MetricProtocol {
+    fn default() -> Self {
+        Self::Influx
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct TelegrafConfig {
-    /// UDP address of the Telegraf InfluxDB line-protocol listener.
     pub address: String,
+    pub protocol: MetricProtocol,
 }
 
 impl Default for TelegrafConfig {
     fn default() -> Self {
-        Self { address: "127.0.0.1:8125".to_string() }
+        Self {
+            address: "127.0.0.1:8125".to_string(),
+            protocol: MetricProtocol::default(),
+        }
     }
 }
 
