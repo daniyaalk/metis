@@ -171,7 +171,7 @@ impl Module for MysqlModule {
                     _ => {}
                 }
             }
-            ProbeEvent::SockDefReadable { socket_ptr, timestamp_ns } => {
+            ProbeEvent::SockDefReadable { socket_ptr, timestamp_ns, response_head } => {
                 if let Some(pq) = self.pending.remove(socket_ptr) {
                     if !pq.query.is_empty() {
                         let latency_ms =
@@ -197,6 +197,38 @@ impl Module for MysqlModule {
                             latency_ms,
                             domain.as_deref(),
                         );
+                        if let Some(rows) = parse_ok_affected_rows(response_head) {
+                            log::debug!(
+                                "[mysql] OK: socket={:x} affected_rows={}",
+                                socket_ptr, rows,
+                            );
+                            self.sink.push_mysql_affected_rows(
+                                pq.dest_ip,
+                                pq.ip_family,
+                                pq.dest_port,
+                                &pq.db,
+                                &pq.username,
+                                &normalized,
+                                rows,
+                                domain.as_deref(),
+                            );
+                        } else if let Some((code, msg)) = parse_error_packet(response_head) {
+                            log::debug!(
+                                "[mysql] error: socket={:x} code={} msg={:?}",
+                                socket_ptr, code, msg,
+                            );
+                            self.sink.push_mysql_query_error(
+                                pq.dest_ip,
+                                pq.ip_family,
+                                pq.dest_port,
+                                &pq.db,
+                                &pq.username,
+                                &normalized,
+                                code,
+                                &msg,
+                                domain.as_deref(),
+                            );
+                        }
                     }
                 }
             }
@@ -316,6 +348,49 @@ fn read_lenenc_int(data: &[u8], pos: &mut usize) -> Option<u64> {
         }
         _ => None,
     }
+}
+
+/// Returns `affected_rows` when `head` begins with a MySQL OK packet
+/// (byte[3] == seq 1, byte[4] == 0x00). Returns `None` for result-set responses
+/// (SELECT), error packets (0xFF), or EOF packets (0xFE).
+fn parse_ok_affected_rows(head: &[u8]) -> Option<u64> {
+    if head.len() < 7 { return None; }
+    // MySQL framing: payload_len[3] + seq[1]. The first server response to any
+    // command starts with sequence number 1.
+    if head[3] != 0x01 { return None; }
+    // OK packet is identified by the 0x00 byte immediately after the header.
+    if head[4] != 0x00 { return None; }
+    // affected_rows is a length-encoded integer at offset 5.
+    let mut pos = 5;
+    read_lenenc_int(head, &mut pos)
+}
+
+/// Returns `(error_code, error_message)` when `head` begins with a MySQL error
+/// packet (byte[4] == 0xFF) in Protocol 4.1 format. The message is decoded from
+/// the bytes following the fixed 5-character SQL state field and may be truncated
+/// if `head` was shorter than the full packet.
+fn parse_error_packet(head: &[u8]) -> Option<(u16, String)> {
+    // Minimum: framing header[4] + 0xFF[1] + error_code[2] + '#'[1] + sql_state[5] = 13 bytes.
+    if head.len() < 13 { return None; }
+    if head[3] != 0x01 { return None; }
+    if head[4] != 0xFF { return None; }
+    let error_code = u16::from_le_bytes([head[5], head[6]]);
+    // Protocol 4.1 sql-state marker; its presence is guaranteed by our assumption.
+    if head[7] != b'#' { return None; }
+    // Error message: follows the 5-byte sql_state at byte 13.
+    let mysql_payload_len = u32::from_le_bytes([head[0], head[1], head[2], 0]) as usize;
+    let packet_end = 4 + mysql_payload_len;
+    let truncated = head.len() < packet_end;
+    let msg_end = packet_end.min(head.len());
+    let mut msg = if msg_end > 13 {
+        String::from_utf8_lossy(&head[13..msg_end]).into_owned()
+    } else {
+        String::new()
+    };
+    if truncated {
+        msg.push_str("...");
+    }
+    Some((error_code, msg))
 }
 
 fn fmt_ip(ip: [u8; 16], family: u8) -> IpAddr {
@@ -502,5 +577,129 @@ mod tests {
         let mut pkt = make_handshake_response("alice", None);
         pkt[3] = 0x00; // wrong sequence
         assert!(parse_handshake_response(&pkt).is_none());
+    }
+
+    fn make_ok_packet(affected_rows: u64) -> Vec<u8> {
+        let mut pkt = Vec::new();
+        // MySQL framing: len[3] + seq[1]
+        pkt.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        // OK packet header
+        pkt.push(0x00);
+        // affected_rows as length-encoded integer
+        if affected_rows <= 250 {
+            pkt.push(affected_rows as u8);
+        } else if affected_rows <= 0xFFFF {
+            pkt.push(0xFC);
+            pkt.extend_from_slice(&(affected_rows as u16).to_le_bytes());
+        } else {
+            pkt.push(0xFE);
+            pkt.extend_from_slice(&affected_rows.to_le_bytes());
+        }
+        // last_insert_id = 0, status flags, warnings (filler so len >= 7)
+        pkt.extend_from_slice(&[0x00, 0x02, 0x00, 0x00, 0x00]);
+        pkt
+    }
+
+    #[test]
+    fn ok_packet_small_affected_rows() {
+        let pkt = make_ok_packet(5);
+        assert_eq!(parse_ok_affected_rows(&pkt), Some(5));
+    }
+
+    #[test]
+    fn ok_packet_zero_affected_rows() {
+        let pkt = make_ok_packet(0);
+        assert_eq!(parse_ok_affected_rows(&pkt), Some(0));
+    }
+
+    #[test]
+    fn ok_packet_large_affected_rows() {
+        let pkt = make_ok_packet(1000);
+        assert_eq!(parse_ok_affected_rows(&pkt), Some(1000));
+    }
+
+    #[test]
+    fn ok_packet_rejects_error() {
+        // Error packet: byte[4] = 0xFF
+        let pkt = [0x00, 0x00, 0x00, 0x01, 0xFF, 0x15, 0x04, 0x00];
+        assert_eq!(parse_ok_affected_rows(&pkt), None);
+    }
+
+    #[test]
+    fn ok_packet_rejects_result_set() {
+        // Result set: byte[4] = column count (e.g. 3)
+        let pkt = [0x00, 0x00, 0x00, 0x01, 0x03, 0x00, 0x00, 0x00];
+        assert_eq!(parse_ok_affected_rows(&pkt), None);
+    }
+
+    #[test]
+    fn ok_packet_rejects_wrong_seq() {
+        let mut pkt = make_ok_packet(1);
+        pkt[3] = 0x02; // seq != 1
+        assert_eq!(parse_ok_affected_rows(&pkt), None);
+    }
+
+    fn make_error_packet(code: u16, msg: &str) -> Vec<u8> {
+        let payload_len = 1 + 2 + 1 + 5 + msg.len(); // 0xFF + code + '#' + state + msg
+        let mut pkt = Vec::new();
+        pkt.push((payload_len & 0xFF) as u8);
+        pkt.push(((payload_len >> 8) & 0xFF) as u8);
+        pkt.push(0x00); // high byte of length
+        pkt.push(0x01); // seq = 1
+        pkt.push(0xFF); // error marker
+        pkt.extend_from_slice(&code.to_le_bytes());
+        pkt.push(b'#');
+        pkt.extend_from_slice(b"HY000"); // generic sql state
+        pkt.extend_from_slice(msg.as_bytes());
+        pkt
+    }
+
+    #[test]
+    fn error_packet_parses_code_and_message() {
+        let pkt = make_error_packet(1064, "You have an error in your SQL syntax");
+        let (code, msg) = parse_error_packet(&pkt).unwrap();
+        assert_eq!(code, 1064);
+        assert_eq!(msg, "You have an error in your SQL syntax");
+    }
+
+    #[test]
+    fn error_packet_empty_message() {
+        let pkt = make_error_packet(1045, "");
+        let (code, msg) = parse_error_packet(&pkt).unwrap();
+        assert_eq!(code, 1045);
+        assert_eq!(msg, "");
+    }
+
+    #[test]
+    fn error_packet_truncated_message_gets_ellipsis() {
+        // Build a packet whose declared length exceeds the slice we pass in.
+        let mut pkt = make_error_packet(1064, "abcdefghij");
+        // Claim the payload is 10 bytes longer than it actually is.
+        let declared: u16 = u16::from_le_bytes([pkt[0], pkt[1]]) + 10;
+        pkt[0] = (declared & 0xFF) as u8;
+        pkt[1] = (declared >> 8) as u8;
+        let (_, msg) = parse_error_packet(&pkt).unwrap();
+        assert!(msg.ends_with("..."), "expected ellipsis, got: {msg:?}");
+        assert!(msg.starts_with("abcdefghij"));
+    }
+
+    #[test]
+    fn error_packet_rejects_ok() {
+        let pkt = make_ok_packet(0);
+        assert!(parse_error_packet(&pkt).is_none());
+    }
+
+    #[test]
+    fn error_packet_rejects_wrong_seq() {
+        let mut pkt = make_error_packet(1064, "err");
+        pkt[3] = 0x02;
+        assert!(parse_error_packet(&pkt).is_none());
+    }
+
+    #[test]
+    fn error_packet_rejects_missing_state_marker() {
+        let mut pkt = make_error_packet(1064, "err");
+        pkt[7] = b'X'; // not '#'
+        assert!(parse_error_packet(&pkt).is_none());
     }
 }

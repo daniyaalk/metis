@@ -43,7 +43,9 @@ pub enum ProbeEvent {
     /// Reassembled payload from one or more `KProbeChunk`s.
     TcpSendMsg { dest_ip: [u8; 16], ip_family: u8, dest_port: u16, socket_ptr: u64, timestamp_ns: u64, payload: Vec<u8> },
     /// First inbound packet on a tracked socket; correlate with TcpSendMsg via socket_ptr.
-    SockDefReadable { socket_ptr: u64, timestamp_ns: u64 },
+    /// `response_head` carries the first bytes of the TCP payload peeked from
+    /// sk->sk_receive_queue; empty when the peek failed.
+    SockDefReadable { socket_ptr: u64, timestamp_ns: u64, response_head: Vec<u8> },
     /// Raw UDP payload received from the given source port and destination IP.
     UdpRecvMsg { src_port: u16, dest_ip: std::net::IpAddr, payload: Vec<u8> },
 }

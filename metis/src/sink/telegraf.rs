@@ -339,6 +339,119 @@ impl TelegrafMetricsPusher {
         }
     }
 
+    pub fn push_mysql_affected_rows(
+        &self,
+        dest_ip: [u8; 16],
+        ip_family: u8,
+        port: u16,
+        db: &str,
+        username: &str,
+        query: &str,
+        rows: u64,
+        domain: Option<&str>,
+    ) {
+        match self.protocol {
+            MetricProtocol::Influx => {
+                let db_tag = if db.is_empty() {
+                    String::new()
+                } else {
+                    format!(",db={}", influx_tag(db))
+                };
+                let user_tag = if username.is_empty() {
+                    String::new()
+                } else {
+                    format!(",user={}", influx_tag(username))
+                };
+                self.send(format!(
+                    "mysql_affected_rows,port={}{}{}{}{},query={} rows={}i",
+                    port,
+                    influx_db_ip(dest_ip, ip_family),
+                    db_tag,
+                    user_tag,
+                    influx_domain_tag(domain),
+                    influx_tag(query),
+                    rows,
+                ));
+            }
+            MetricProtocol::Statsd => {
+                let mut tags = StatsdTags::new();
+                tags.add("port", &port.to_string());
+                let ip_str = statsd_db_ip(dest_ip, ip_family);
+                if !ip_str.is_empty() {
+                    tags.add("db_ip", &ip_str);
+                }
+                if !db.is_empty() {
+                    tags.add("db", db);
+                }
+                if !username.is_empty() {
+                    tags.add("user", username);
+                }
+                tags.add_opt("domain", domain)
+                    .add("query", query);
+                self.send(format!("mysql_affected_rows:{}|g{}", rows, tags.suffix()));
+            }
+        }
+    }
+
+    pub fn push_mysql_query_error(
+        &self,
+        dest_ip: [u8; 16],
+        ip_family: u8,
+        port: u16,
+        db: &str,
+        username: &str,
+        query: &str,
+        error_code: u16,
+        error_message: &str,
+        domain: Option<&str>,
+    ) {
+        let code_str = error_code.to_string();
+        match self.protocol {
+            MetricProtocol::Influx => {
+                let db_tag = if db.is_empty() {
+                    String::new()
+                } else {
+                    format!(",db={}", influx_tag(db))
+                };
+                let user_tag = if username.is_empty() {
+                    String::new()
+                } else {
+                    format!(",user={}", influx_tag(username))
+                };
+                self.send(format!(
+                    "mysql_query_error,port={}{}{}{}{},query={},error_code={},error_message={} count=1i",
+                    port,
+                    influx_db_ip(dest_ip, ip_family),
+                    db_tag,
+                    user_tag,
+                    influx_domain_tag(domain),
+                    influx_tag(query),
+                    code_str,
+                    influx_tag(error_message),
+                ));
+            }
+            MetricProtocol::Statsd => {
+                let mut tags = StatsdTags::new();
+                tags.add("port", &port.to_string());
+                let ip_str = statsd_db_ip(dest_ip, ip_family);
+                if !ip_str.is_empty() {
+                    tags.add("db_ip", &ip_str);
+                }
+                if !db.is_empty() {
+                    tags.add("db", db);
+                }
+                if !username.is_empty() {
+                    tags.add("user", username);
+                }
+                tags.add_opt("domain", domain)
+                    .add("query", query)
+                    .add("error_code", &code_str)
+                    .add("error_message", error_message);
+                self.send(format!("mysql_query_error:1|c{}", tags.suffix()));
+            }
+        }
+    }
+
     pub fn push_dns_query(
         &self,
         domain: &str,

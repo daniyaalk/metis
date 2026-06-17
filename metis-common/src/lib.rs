@@ -19,6 +19,12 @@ pub struct TCPProbeEvent {
 pub struct TcpResponseEvent {
     pub socket_ptr: u64,
     pub timestamp_ns: u64,
+    /// Number of valid bytes in `data`. 0 = receive-queue peek failed.
+    pub data_len: u16,
+    pub _pad: [u8; 6],
+    /// First bytes of the TCP payload peeked from sk->sk_receive_queue.
+    /// For MySQL, this is the raw MySQL packet (4-byte framing header + payload).
+    pub data: [u8; 128],
 }
 
 /// Kernel field offsets for `iov_iter`, detected at startup from BTF.
