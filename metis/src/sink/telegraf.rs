@@ -284,6 +284,7 @@ impl TelegrafMetricsPusher {
         ip_family: u8,
         port: u16,
         db: &str,
+        username: &str,
         query: &str,
         latency_ms: f64,
         domain: Option<&str>,
@@ -295,18 +296,30 @@ impl TelegrafMetricsPusher {
                 } else {
                     format!(",db={}", influx_tag(db))
                 };
+                let user_tag = if username.is_empty() {
+                    String::new()
+                } else {
+                    format!(",user={}", influx_tag(username))
+                };
                 self.send(format!(
-                    "mysql_query_latency,port={}{}{}{},query={} latency_ms={}",
+                    "mysql_query_latency,port={}{}{}{}{},query={} latency_ms={}",
                     port,
                     influx_db_ip(dest_ip, ip_family),
                     db_tag,
+                    user_tag,
                     influx_domain_tag(domain),
                     influx_tag(query),
                     latency_ms,
                 ));
             }
             MetricProtocol::Statsd => {
-                // latency maps naturally to StatsD's `ms` timing type.
+                // Gauge rather than |ms timing: |ms causes Telegraf to fan out
+                // 7 derived statistics which then get a second basicstats layer,
+                // producing names like mysql_query_latency_mean_mean.
+                // basicstats on a gauge produces one clean layer:
+                //   mysql_query_latency_ms_value_{count,mean,min,max}
+                // value_count is already the per-interval query count, so no
+                // separate counter is needed.
                 let mut tags = StatsdTags::new();
                 tags.add("port", &port.to_string());
                 let ip_str = statsd_db_ip(dest_ip, ip_family);
@@ -316,9 +329,12 @@ impl TelegrafMetricsPusher {
                 if !db.is_empty() {
                     tags.add("db", db);
                 }
+                if !username.is_empty() {
+                    tags.add("user", username);
+                }
                 tags.add_opt("domain", domain)
                     .add("query", query);
-                self.send(format!("mysql_query_latency:{}|ms{}", latency_ms, tags.suffix()));
+                self.send(format!("mysql_query_latency_ms:{}|g{}", latency_ms, tags.suffix()));
             }
         }
     }
