@@ -35,6 +35,13 @@ pub static mut TRACKED_SOCKETS: LruHashMap<u64, u8> = LruHashMap::with_max_entri
 #[map(name = "TCP_SENDMSG_SAMPLE_RATE")]
 static mut SAMPLE_RATE: Array<u32> = Array::with_max_entries(1, 0);
 
+/// socket_ptr → sampling decision (1 = in, 0 = out), rolled once per connection
+/// on its first tcp_sendmsg call and reused for every subsequent packet on that
+/// socket. Keeps e.g. a MySQL handshake and every query that follows it on the
+/// same connection either all captured or all dropped together.
+#[map(name = "CONN_SAMPLE_DECISION")]
+static mut CONN_SAMPLE_DECISION: LruHashMap<u64, u8> = LruHashMap::with_max_entries(8192, 0);
+
 /// iov_iter field offsets (bytes from msghdr base), populated by userspace from BTF at startup.
 #[map(name = "IOV_LAYOUT")]
 static mut IOV_LAYOUT: Array<IovLayout> = Array::with_max_entries(1, 0);
@@ -57,10 +64,22 @@ pub fn tcp_sendmsg(ctx: ProbeContext) -> Result<u32, u32> {
         return Ok(0);
     }
 
-    // ── Sampling ──────────────────────────────────────────────────────────────
+    // ── Sampling: decide once per connection, then reuse for every packet ─────
+    let sock_key = sock as u64;
     #[allow(static_mut_refs)]
-    let threshold = unsafe { SAMPLE_RATE.get(0).copied().unwrap_or(u32::MAX) };
-    if threshold < u32::MAX && unsafe { bpf_get_prandom_u32() } > threshold {
+    let sampled_in = if let Some(&decision) = unsafe { CONN_SAMPLE_DECISION.get(&sock_key) } {
+        decision != 0
+    } else {
+        #[allow(static_mut_refs)]
+        let threshold = unsafe { SAMPLE_RATE.get(0).copied().unwrap_or(u32::MAX) };
+        let decision = threshold >= u32::MAX || unsafe { bpf_get_prandom_u32() } <= threshold;
+        #[allow(static_mut_refs)]
+        unsafe {
+            let _ = CONN_SAMPLE_DECISION.insert(&sock_key, &(decision as u8), 0);
+        }
+        decision
+    };
+    if !sampled_in {
         return Ok(0);
     }
 
@@ -151,7 +170,7 @@ pub fn tcp_sendmsg(ctx: ProbeContext) -> Result<u32, u32> {
     let read_ok: bool;
     let data_addr = data_ptr as u64;
     unsafe {
-        (*scratch).socket_ptr = sock as u64;
+        (*scratch).socket_ptr = sock_key;
         (*scratch).timestamp_ns = bpf_ktime_get_ns();
         (*scratch).dest_ip = dest_ip;
         (*scratch).dest_port = port;
@@ -180,7 +199,7 @@ pub fn tcp_sendmsg(ctx: ProbeContext) -> Result<u32, u32> {
         #[allow(static_mut_refs)]
         let _ = TCP_SENDMSG_RINGBUF.output::<KProbeChunk>(&*scratch, 0);
         #[allow(static_mut_refs)]
-        let _ = TRACKED_SOCKETS.insert(&(sock as u64), &1u8, 0);
+        let _ = TRACKED_SOCKETS.insert(&sock_key, &1u8, 0);
     }
 
     Ok(0)

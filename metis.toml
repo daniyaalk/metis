@@ -1,6 +1,8 @@
-# Percentage of tcp_sendmsg events to capture (0.0–100.0). Supports fractional values.
+# Percentage of tcp_sendmsg connections to capture (0.0–100.0). Supports fractional values.
+# Sampled once per connection (on its first packet) and reused for every later packet on
+# that connection, so e.g. a sampled-in MySQL connection never loses its handshake packet.
 # Shared by all modules that use the tcp_sendmsg probe (mysql, http).
-# e.g. 0.01 = 1 in 10000 events; 10.0 = 1 in 10 events; 100.0 = all events.
+# e.g. 0.01 = 1 in 10000 connections; 10.0 = 1 in 10 connections; 100.0 = all connections.
 tcp_sendmsg_sample_rate = 100.0
 
 [telegraf]

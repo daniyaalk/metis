@@ -3,7 +3,10 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
-    /// Percentage of tcp_sendmsg events to capture (0.0–100.0). Supports fractional values.
+    /// Percentage of tcp_sendmsg connections to capture (0.0–100.0). Supports fractional
+    /// values. The decision is made once per connection, on its first tcp_sendmsg call, and
+    /// then applies to every packet on that connection — so a sampled-in connection never
+    /// loses e.g. a MySQL handshake packet while later query packets are captured.
     /// Applies to all modules that use the tcp_sendmsg probe.
     pub tcp_sendmsg_sample_rate: f32,
     pub telegraf: TelegrafConfig,

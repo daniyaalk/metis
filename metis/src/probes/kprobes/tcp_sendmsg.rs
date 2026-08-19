@@ -12,6 +12,8 @@ use tokio::io::Interest;
 pub struct TcpSendMsgProbe {
     ports: Vec<u16>,
     /// Sampling rate as a percentage (0.0–100.0). Supports fractional values like 0.01.
+    /// Applied once per connection (on its first tcp_sendmsg call) rather than per packet,
+    /// so a sampled-in connection has every packet captured, including the first one.
     sample_rate: f32,
 }
 

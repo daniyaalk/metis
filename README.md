@@ -24,9 +24,12 @@ Cargo build scripts automatically compile the eBPF programs and embed them in th
 Metis is configured via a TOML file. Pass the path with `--config` (defaults to `metis.toml` in the working directory). If the file is not found, all settings fall back to their defaults.
 
 ```toml
-# Percentage of outbound tcp_sendmsg events to capture (0.0–100.0).
+# Percentage of tcp_sendmsg connections to capture (0.0–100.0).
+# Sampled once per connection, on its first packet, and reused for every later
+# packet on that connection — so a sampled-in connection never loses e.g. a
+# MySQL handshake packet while its query packets are captured.
 # Applies to all modules that use the tcp_sendmsg probe (mysql, http).
-# Supports fractional values: 0.01 = 1 in 10 000 events.
+# Supports fractional values: 0.01 = 1 in 10 000 connections.
 tcp_sendmsg_sample_rate = 100.0
 
 [telegraf]

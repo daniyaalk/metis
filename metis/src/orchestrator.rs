@@ -13,7 +13,8 @@ use std::sync::{Arc, Mutex};
 
 pub struct Orchestrator {
     modules: Vec<Arc<Mutex<dyn Module>>>,
-    /// Percentage of tcp_sendmsg events to capture (0.0–100.0). Shared by all modules.
+    /// Percentage of tcp_sendmsg connections to capture (0.0–100.0), sampled once per
+    /// connection and reused for every packet on it. Shared by all modules.
     tcp_sendmsg_sample_rate: f32,
 }
 
